@@ -230,8 +230,8 @@ async def restock(ctx, tipo: str, *, produtos: str):
     # ALERTA CANAL – **tudo dentro do comando async**
     if RESTOCK_CHANNEL_ID:
         try:
-            canal = await bot.fetch_channel(RESTOCK_CHANNEL_ID)
-            ping = f"<@&{RESTOCK_ROLE_ID}> " if RESTOCK_ROLE_ID else ""
+            canal = await bot.fetch_channel(1474702726389567588)
+            ping = f"<@&{1475311889293774939}> " if RESTOCK_ROLE_ID else ""
             await canal.send(
                 f"{ping}🔔 **RESTOCK**\n"
                 f"Produto: {tipo.upper()}\n"
