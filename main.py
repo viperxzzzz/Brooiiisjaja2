@@ -27,6 +27,11 @@ STOCK_FILES = {
 }
 
 CREDITS_FILE = "credits.json"
+GEN_LOG_FILE = "gen_log.txt"
+
+# CONFIG RESTOCK ALERTA
+RESTOCK_CHANNEL_ID = 0  # coloca id aqui
+RESTOCK_ROLE_ID = 0     # opcional ping
 
 
 # ================= CREDITS =================
@@ -117,6 +122,12 @@ class GenView(discord.ui.View):
                 f"🛒 Produto: {tipo.upper()}\n"
                 f"🔑 {produto}"
             )
+
+            # LOG
+            with lock:
+                with open(GEN_LOG_FILE, "a") as f:
+                    f.write(f"{user.id} | {tipo} | {produto}\n")
+
             await interaction.response.send_message(
                 "✅ Produto enviado na DM.",
                 ephemeral=True
@@ -176,11 +187,10 @@ async def painel(ctx):
     embed = discord.Embed(
         title="🛒 Painel de Geração",
         description=(
-             "**The best guaranteed quality Roblox account generator**\n\n"
+            "**The best guaranteed quality Roblox account generator**\n\n"
             "Work with quality accounts and profit today With Viper, you can usually hit Robux, valuable games items, RAP, old join date and much more.\n\n"
             "**We restock our stocks every 3-8 hours.**\n\n"
-           
-             "**Escolha o produto:**\n\n"
+            "**Escolha o produto:**\n\n"
             "🔘 Low Quality — 5 créditos\n"
             "🔘 Medium Quality — 10 créditos\n"
             "🔘 High Quality — 14 créditos"
@@ -191,6 +201,87 @@ async def painel(ctx):
     embed.set_footer(text="Após clicar, o produto será enviado na DM.")
 
     await ctx.send(embed=embed, view=GenView())
+
+
+# ================= RESTOCK =================
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def restock(ctx, tipo: str, *, produtos: str):
+    tipo = tipo.lower()
+
+    if tipo not in STOCK_FILES:
+        await ctx.send("❌ Tipo inválido. Use: low, medium, high")
+        return
+
+    file = STOCK_FILES[tipo]
+    lista = [p.strip() for p in produtos.split("\n") if p.strip()]
+
+    if not lista:
+        await ctx.send("❌ Nenhum produto válido.")
+        return
+
+    with lock:
+        with open(file, "a") as f:
+            f.write("\n".join(lista) + "\n")
+
+    await ctx.send(f"✅ {len(lista)} produtos adicionados ao estoque {tipo}.")
+
+    # ALERTA CANAL
+    if RESTOCK_CHANNEL_ID:
+        canal = bot.get_channel(1475313284583260202)
+        if canal:
+            ping = f"<@&1475311889293774939> " if RESTOCK_ROLE_ID else ""
+            await canal.send(
+                f"{ping}🔔 **RESTOCK**\n"
+                f"Produto: {tipo.upper()}\n"
+                f"Quantidade: {len(lista)}"
+            )
+
+
+# ================= STOCK =================
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def stock(ctx):
+    msg = "📦 **Estoque atual:**\n"
+
+    for tipo, file in STOCK_FILES.items():
+        if not os.path.exists(file):
+            qtd = 0
+        else:
+            with open(file, "r") as f:
+                qtd = len([l for l in f if l.strip()])
+
+        msg += f"• {tipo.upper()}: {qtd}\n"
+
+    await ctx.send(msg)
+
+
+# ================= GEN LOG =================
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def genlog(ctx, linhas: int = 10):
+    if not os.path.exists(GEN_LOG_FILE):
+        await ctx.send("❌ Sem log ainda.")
+        return
+
+    with open(GEN_LOG_FILE, "r") as f:
+        dados = [l.strip() for l in f if l.strip()]
+
+    if not dados:
+        await ctx.send("❌ Log vazio.")
+        return
+
+    ultimos = dados[-linhas:]
+
+    texto = "🧾 **Últimas gerações:**\n"
+    for l in ultimos:
+        uid, tipo, prod = l.split(" | ", 2)
+        texto += f"• {tipo.upper()} → <@{uid}>\n"
+
+    await ctx.send(texto)
 
 
 # ================= RUN =================
