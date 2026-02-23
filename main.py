@@ -30,8 +30,8 @@ CREDITS_FILE = "credits.json"
 GEN_LOG_FILE = "gen_log.txt"
 
 # CONFIG RESTOCK ALERTA
-RESTOCK_CHANNEL_ID = 0  # coloca id aqui
-RESTOCK_ROLE_ID = 0     # opcional ping
+RESTOCK_CHANNEL_ID = 1475313284583260202  # canal de restock
+RESTOCK_ROLE_ID = 1475311889293774939     # cargo para ping, 0 se não quiser ping
 
 
 # ================= CREDITS =================
@@ -227,11 +227,11 @@ async def restock(ctx, tipo: str, *, produtos: str):
 
     await ctx.send(f"✅ {len(lista)} produtos adicionados ao estoque {tipo}.")
 
-    # ALERTA CANAL – **tudo dentro do comando async**
+    # ALERTA CANAL
     if RESTOCK_CHANNEL_ID:
         try:
-            canal = await bot.fetch_channel(1474702726389567588)
-            ping = f"<@&{1475311889293774939}> " if RESTOCK_ROLE_ID else ""
+            canal = await bot.fetch_channel(RESTOCK_CHANNEL_ID)
+            ping = f"<@&{RESTOCK_ROLE_ID}> " if RESTOCK_ROLE_ID else ""
             await canal.send(
                 f"{ping}🔔 **RESTOCK**\n"
                 f"Produto: {tipo.upper()}\n"
