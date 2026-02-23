@@ -30,7 +30,7 @@ CREDITS_FILE = "credits.json"
 GEN_LOG_FILE = "gen_log.txt"
 
 # CONFIG RESTOCK ALERTA
-RESTOCK_CHANNEL_ID = 1475313284583260202  # canal de restock
+RESTOCK_CHANNEL_ID = 1474702726389567588 # canal de restock
 RESTOCK_ROLE_ID = 1475311889293774939     # cargo para ping, 0 se não quiser ping
 
 
