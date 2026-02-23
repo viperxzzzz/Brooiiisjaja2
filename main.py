@@ -4,7 +4,7 @@ import json
 import threading
 import os
 
-TOKEN = "SEU TOKEN AQUI"
+TOKEN = os.getenv("TOKEN")
 PREFIX = "!"
 
 intents = discord.Intents.default()
