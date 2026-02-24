@@ -3,6 +3,7 @@ from discord.ext import commands
 import json
 import threading
 import os
+import time
 
 TOKEN = os.getenv("TOKEN")
 PREFIX = "!"
@@ -14,8 +15,10 @@ bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 
 lock = threading.Lock()
 
+# ================= CONFIG =================
+
 PRICES = {
-    "low": 5,
+    "low": 3,
     "medium": 10,
     "high": 14
 }
@@ -29,10 +32,11 @@ STOCK_FILES = {
 CREDITS_FILE = "credits.json"
 GEN_LOG_FILE = "gen_log.txt"
 
-# CONFIG RESTOCK ALERTA
-RESTOCK_CHANNEL_ID = 1474702726389567588 # canal de restock
-RESTOCK_ROLE_ID = 1475311889293774939     # cargo para ping, 0 se não quiser ping
+RESTOCK_CHANNEL_ID = 1474702726389567588
+RESTOCK_ROLE_ID = 1475311889293774939
 
+GEN_COOLDOWN = 8
+user_cooldowns = {}
 
 # ================= CREDITS =================
 
@@ -64,7 +68,6 @@ def remove_credits_amount(user_id, amount):
     save_credits(data)
     return True
 
-
 # ================= STOCK =================
 
 def gerar_produto(tipo):
@@ -88,7 +91,6 @@ def gerar_produto(tipo):
 
         return produto
 
-
 # ================= BOTÕES =================
 
 class GenView(discord.ui.View):
@@ -99,6 +101,19 @@ class GenView(discord.ui.View):
         user = interaction.user
         price = PRICES[tipo]
 
+        # COOLDOWN
+        now = time.time()
+        last = user_cooldowns.get(user.id, 0)
+
+        if now - last < GEN_COOLDOWN:
+            restante = int(GEN_COOLDOWN - (now - last))
+            await interaction.response.send_message(
+                f"⏳ Aguarde {restante}s para gerar novamente.",
+                ephemeral=True
+            )
+            return
+
+        # CREDITS
         if get_credits(user.id) < price:
             await interaction.response.send_message(
                 f"❌ Você precisa de {price} créditos.",
@@ -128,6 +143,8 @@ class GenView(discord.ui.View):
                 with open(GEN_LOG_FILE, "a") as f:
                     f.write(f"{user.id} | {tipo} | {produto}\n")
 
+            user_cooldowns[user.id] = time.time()
+
             await interaction.response.send_message(
                 "✅ Produto enviado na DM.",
                 ephemeral=True
@@ -138,7 +155,7 @@ class GenView(discord.ui.View):
                 ephemeral=True
             )
 
-    @discord.ui.button(label="Low Quality (5)", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Low Quality (3)", style=discord.ButtonStyle.secondary)
     async def low(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process(interaction, "low")
 
@@ -150,7 +167,6 @@ class GenView(discord.ui.View):
     async def high(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process(interaction, "high")
 
-
 # ================= COMANDOS =================
 
 @bot.command()
@@ -158,13 +174,11 @@ async def credits(ctx):
     c = get_credits(ctx.author.id)
     await ctx.send(f"💳 {ctx.author.mention} você tem **{c} créditos**.")
 
-
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def addcredits(ctx, user: discord.Member, amount: int):
     add_credits(user.id, amount)
     await ctx.send(f"✅ {amount} créditos adicionados para {user.mention}.")
-
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -181,7 +195,6 @@ async def removecredits(ctx, user: discord.Member, amount: int):
 
     await ctx.send(f"➖ {amount} créditos removidos de {user.mention}.")
 
-
 @bot.command()
 async def painel(ctx):
     embed = discord.Embed(
@@ -191,7 +204,7 @@ async def painel(ctx):
             "Work with quality accounts and profit today With Viper, you can usually hit Robux, valuable games items, RAP, old join date and much more.\n\n"
             "**We restock our stocks every 3-8 hours.**\n\n"
             "**Escolha o produto:**\n\n"
-            "🔘 Low Quality — 5 créditos\n"
+            "🔘 Low Quality — 3 créditos\n"
             "🔘 Medium Quality — 10 créditos\n"
             "🔘 High Quality — 14 créditos"
         ),
@@ -201,7 +214,6 @@ async def painel(ctx):
     embed.set_footer(text="Após clicar, o produto será enviado na DM.")
 
     await ctx.send(embed=embed, view=GenView())
-
 
 # ================= RESTOCK =================
 
@@ -227,11 +239,12 @@ async def restock(ctx, tipo: str, *, produtos: str):
 
     await ctx.send(f"✅ {len(lista)} produtos adicionados ao estoque {tipo}.")
 
-    # ALERTA CANAL
+    # ALERTA
     if RESTOCK_CHANNEL_ID:
         try:
             canal = await bot.fetch_channel(RESTOCK_CHANNEL_ID)
             ping = f"<@&{RESTOCK_ROLE_ID}> " if RESTOCK_ROLE_ID else ""
+
             await canal.send(
                 f"{ping}🔔 **RESTOCK**\n"
                 f"Produto: {tipo.upper()}\n"
@@ -239,27 +252,54 @@ async def restock(ctx, tipo: str, *, produtos: str):
                 f"Feito por: {ctx.author.mention}"
             )
         except Exception as e:
-            print(f"❌ Erro ao enviar alerta de restock: {e}")
-
+            print(f"Erro restock alerta: {e}")
 
 # ================= STOCK =================
 
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def stock(ctx):
-    msg = "📦 **Estoque atual:**\n"
+async def stock(ctx, tipo: str = None):
 
-    for tipo, file in STOCK_FILES.items():
-        if not os.path.exists(file):
-            qtd = 0
-        else:
-            with open(file, "r") as f:
-                qtd = len([l for l in f if l.strip()])
+    # GERAL
+    if not tipo:
+        msg = "📦 **Estoque atual:**\n"
 
-        msg += f"• {tipo.upper()}: {qtd}\n"
+        for t, file in STOCK_FILES.items():
+            if not os.path.exists(file):
+                qtd = 0
+            else:
+                with open(file, "r") as f:
+                    qtd = len([l for l in f if l.strip()])
 
-    await ctx.send(msg)
+            msg += f"• {t.upper()}: {qtd}\n"
 
+        await ctx.send(msg)
+        return
+
+    # ESPECÍFICO
+    tipo = tipo.lower()
+
+    if tipo not in STOCK_FILES:
+        await ctx.send("❌ Use: low / medium / high")
+        return
+
+    file = STOCK_FILES[tipo]
+
+    if not os.path.exists(file):
+        await ctx.send("❌ Estoque vazio.")
+        return
+
+    with open(file, "r") as f:
+        linhas = [l.strip() for l in f if l.strip()]
+
+    if not linhas:
+        await ctx.send("❌ Estoque vazio.")
+        return
+
+    texto = f"📦 Produtos {tipo.upper()} ({len(linhas)}):\n"
+    texto += "\n".join(linhas[:30])
+
+    await ctx.send(f"```{texto}```")
 
 # ================= GEN LOG =================
 
@@ -279,13 +319,12 @@ async def genlog(ctx, linhas: int = 10):
 
     ultimos = dados[-linhas:]
 
-    texto = "🧾 **Últimas gerações:**\n"
+    texto = "🧾 Últimas gerações:\n"
     for l in ultimos:
         uid, tipo, prod = l.split(" | ", 2)
         texto += f"• {tipo.upper()} → <@{uid}>\n"
 
     await ctx.send(texto)
-
 
 # ================= RUN =================
 
