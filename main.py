@@ -1,4 +1,11 @@
-import discord from discord.ext import commands import json import threading import os import time from datetime import datetime
+import discord
+from discord.ext
+import commands
+import json 
+import threading
+import os 
+import time 
+from datetime import datetime
 
 TOKEN = os.getenv("TOKEN") PREFIX = "!"
 
