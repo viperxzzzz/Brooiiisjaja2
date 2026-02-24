@@ -9,7 +9,8 @@ from datetime import datetime
 TOKEN = os.getenv("TOKEN")
 PREFIX = "!"
 
-intents = discord.Intents.default() intents.message_content = True
+intents = discord.Intents.default() 
+intents.message_content = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=intents) lock = threading.Lock()
 
