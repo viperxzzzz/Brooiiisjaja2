@@ -1,12 +1,13 @@
 import discord
 from discord.ext import commands
-import json 
+import json
 import threading
-import os 
-import time 
+import os
+import time
 from datetime import datetime
 
-TOKEN = os.getenv("TOKEN") PREFIX = "!"
+TOKEN = os.getenv("TOKEN")
+PREFIX = "!"
 
 intents = discord.Intents.default() intents.message_content = True
 
