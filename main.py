@@ -27,6 +27,12 @@ STOCK_FILES = {
     "high": "stock_high.txt"
 }
 
+ODDS = {
+    "low": {"robux": 8, "limited": 2, "rare": 5, "clean": 85},
+    "medium": {"robux": 20, "limited": 8, "rare": 12, "clean": 60},
+    "high": {"robux": 38, "limited": 18, "rare": 22, "clean": 22}
+}
+
 CREDITS_FILE = "credits.json"
 GEN_LOG_FILE = "gen_log.txt"
 ORDERS_FILE = "orders.json"
@@ -92,6 +98,17 @@ def gerar_produto(tipo):
             f.write("\n".join(linhas))
         return produto
 
+# ================= ODDS =================
+
+def roll_hit(tier):
+    r = random.randint(1, 100)
+    acc = 0
+    for k, v in ODDS[tier].items():
+        acc += v
+        if r <= acc:
+            return k
+    return "clean"
+
 # ================= ORDER SYSTEM =================
 
 def create_order(user_id, credits):
@@ -139,6 +156,8 @@ class GenView(discord.ui.View):
             return
 
         produto = gerar_produto(tipo)
+        hit = roll_hit(tipo)
+
         if not produto:
             await interaction.response.send_message(
                 "⚠️ OUT OF STOCK",
@@ -149,21 +168,29 @@ class GenView(discord.ui.View):
         remove_credits(user.id, price)
         user_cooldowns[user.id] = time.time()
 
-        # log txt
+        # ===== LOG TXT =====
         with lock:
             with open(GEN_LOG_FILE, "a") as f:
-                f.write(f"{datetime.utcnow()} | {user.id} | {tipo}\n")
+                f.write(f"{datetime.utcnow()} | {user.id} | {tipo} | {hit} | {produto}\n")
 
-        # log canal
+        # ===== LOG CANAL =====
         canal = bot.get_channel(GEN_LOG_CHANNEL_ID)
         if canal:
             await canal.send(
-                f"🧾 GEN\nUser: <@{user.id}>\nTier: {tipo.upper()}"
+                f"🧾 GEN\n"
+                f"User: <@{user.id}>\n"
+                f"Tier: {tipo.upper()}\n"
+                f"Hit: {hit}\n"
+                f"Key: {produto}"
             )
 
+        # ===== DM USER =====
         try:
             await user.send(
-                f"⛧ VIPER GEN ⛧\nTIER: {tipo.upper()}\nKEY: {produto}"
+                f"⛧ VIPER GEN ⛧\n"
+                f"🛒 Produto: {tipo.upper()}\n"
+                f"🎯 Hit: {hit}\n"
+                f"🔑 {produto}"
             )
             await interaction.response.send_message(
                 "✔ Delivered",
@@ -233,9 +260,21 @@ async def painel(ctx):
         description="NEURAL ACCOUNT GENERATOR",
         color=0xff003c
     )
-    embed.add_field(name="LOW", value="3 credits")
-    embed.add_field(name="MEDIUM", value="10 credits")
-    embed.add_field(name="HIGH", value="14 credits")
+
+    for tier in ["low", "medium", "high"]:
+        odds = ODDS[tier]
+        txt = (
+            f"💰 Robux: {odds['robux']}%\n"
+            f"📦 Limited: {odds['limited']}%\n"
+            f"✨ Rare: {odds['rare']}%\n"
+            f"🧼 Clean: {odds['clean']}%"
+        )
+        embed.add_field(
+            name=f"{tier.upper()} — {PRICES[tier]} credits",
+            value=txt,
+            inline=False
+        )
+
     await ctx.send(embed=embed, view=GenView())
 
 @bot.command()
@@ -285,6 +324,7 @@ async def stock(ctx, tipo: str = None):
                 qtd = len([l for l in f if l.strip()])
         msg += f"{t.upper()}: {qtd}\n"
     await ctx.send(msg)
+
 @bot.command()
 async def stats(ctx):
     gens = 0
@@ -322,7 +362,6 @@ async def stats(ctx):
     embed.add_field(name="Top Tier", value=top_tier)
 
     await ctx.send(embed=embed)
-
 # ================= RUN =================
 
 bot.run(TOKEN)
