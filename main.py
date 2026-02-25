@@ -13,11 +13,12 @@ PREFIX = "!"
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix=PREFIX, intents=intents,
-help_command=None)
+bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 lock = threading.Lock()
 
 # ================= CONFIG =================
+
+BRAND = "⛧ VIPER GEN ⛧"
 
 PRICES = {"low": 3, "medium": 10, "high": 14}
 PRICE_PER_CREDIT = 0.35
@@ -37,8 +38,9 @@ ODDS = {
 CREDITS_FILE = "credits.json"
 GEN_LOG_FILE = "gen_log.txt"
 ORDERS_FILE = "orders.json"
+HITRATE_FILE = "hitrate.json"
 
-RESTOCK_CHANNEL_ID = 1475313284583260202
+RESTOCK_CHANNEL_ID = 1474702726389567588
 RESTOCK_ROLE_ID = 1475311889293774939
 GEN_LOG_CHANNEL_ID = 1475984317581627402
 
@@ -48,7 +50,6 @@ PIX_NAME = "VHXZ STORE"
 GEN_COOLDOWN = 8
 user_cooldowns = {}
 
-HITRATE_FILE = "hitrate.json"
 # ================= UTILS =================
 
 def load_json(path):
@@ -74,6 +75,8 @@ def save_hitrate(data):
     with open(HITRATE_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
+# ================= PARSER =================
+
 def parse_viper_blocks(text):
     blocks = text.split("VIPER GEN RESULT")
     results = []
@@ -96,9 +99,8 @@ def parse_viper_blocks(text):
             pwd = b.split("Pass:")[1].split("\n")[0].strip()
 
         if "Robux:" in b:
-            val = b.split("Robux:")[1].split("\n")[0].strip()
-            val = int("".join([c for c in val if c.isdigit()]))
-
+            val = b.split("Robux:")[1].split("\n")[0]
+            val = int("".join(c for c in val if c.isdigit()))
             results.append({
                 "tipo": "robux",
                 "valor": val,
@@ -109,11 +111,10 @@ def parse_viper_blocks(text):
 
         elif "Limited:" in b:
             item = b.split("Limited:")[1].split("\n")[0].strip()
-
             rap = 0
-            if "RAP" in b or "Value:" in b:
+            if "Value:" in b:
                 line = b.split("Value:")[1].split("\n")[0]
-                nums = "".join([c for c in line if c.isdigit()])
+                nums = "".join(c for c in line if c.isdigit())
                 if nums:
                     rap = int(nums)
 
@@ -127,6 +128,49 @@ def parse_viper_blocks(text):
             })
 
     return results
+
+# ================= STOCK =================
+
+def gerar_produto(tipo):
+    file = STOCK_FILES[tipo]
+    with lock:
+        if not os.path.exists(file):
+            return None
+        with open(file, "r") as f:
+            linhas = [l.strip() for l in f if l.strip()]
+        if not linhas:
+            return None
+        produto = linhas.pop(0)
+        with open(file, "w") as f:
+            f.write("\n".join(linhas))
+        return produto
+
+def save_parsed_results(results):
+    hit = load_hitrate()
+    tier_counts = {"low": 0, "medium": 0, "high": 0}
+
+    for r in results:
+        tier = r["tier"]
+        if tier not in STOCK_FILES:
+            continue
+
+        if r["tipo"] == "robux":
+            line = f"ROBux:{r['valor']}|{r['user']}|{r['pass']}"
+            hit["robux"] += 1
+        else:
+            line = f"LIMITED:{r['item']}|{r['rap']}|{r['user']}|{r['pass']}"
+            hit["limited"] += 1
+            hit["rap_total"] += r["rap"]
+
+        with lock:
+            with open(STOCK_FILES[tier], "a") as f:
+                f.write(line + "\n")
+
+        hit["total"] += 1
+        tier_counts[tier] += 1
+
+    save_hitrate(hit)
+    return tier_counts
 
 # ================= CREDITS =================
 
@@ -148,51 +192,7 @@ def remove_credits(user_id, amount):
     save_json(CREDITS_FILE, data)
     return True
 
-def save_parsed_results(results):
-    hit = load_hitrate()
-
-    for r in results:
-        tier = r["tier"]
-        if tier not in STOCK_FILES:
-            continue
-
-        if r["tipo"] == "robux":
-            line = f"ROBux:{r['valor']}|{r['user']}|{r['pass']}"
-            hit["robux"] += 1
-
-        else:
-            line = f"LIMITED:{r['item']}|{r['rap']}|{r['user']}|{r['pass']}"
-            hit["limited"] += 1
-            hit["rap_total"] += r["rap"]
-
-        with lock:
-            with open(STOCK_FILES[tier], "a") as f:
-                f.write(line + "\n")
-
-        hit["total"] += 1
-
-    save_hitrate(hit)
-# ================= STOCK =================
-
-def gerar_produto(tipo):
-    file = STOCK_FILES[tipo]
-    with lock:
-        if not os.path.exists(file):
-            return None
-        with open(file, "r") as f:
-            linhas = [l.strip() for l in f if l.strip()]
-        if not linhas:
-            return None
-        produto = linhas.pop(0)
-        with open(file, "w") as f:
-            f.write("\n".join(linhas))
-        return produto
-
-# ================= HITRATE =================
-
-
-    
-# ================= ODDS =================
+# ================= GEN =================
 
 def roll_hit(tier):
     r = random.randint(1, 100)
@@ -202,26 +202,6 @@ def roll_hit(tier):
         if r <= acc:
             return k
     return "clean"
-
-# ================= ORDER SYSTEM =================
-
-def create_order(user_id, credits):
-    orders = load_json(ORDERS_FILE)
-    oid = f"VX-{random.randint(1000,9999)}"
-    total = round(credits * PRICE_PER_CREDIT, 2)
-
-    orders[oid] = {
-        "user": user_id,
-        "credits": credits,
-        "total": total,
-        "status": "waiting",
-        "time": str(datetime.utcnow())
-    }
-
-    save_json(ORDERS_FILE, orders)
-    return oid, total
-
-# ================= GEN VIEW =================
 
 class GenView(discord.ui.View):
     def __init__(self):
@@ -235,91 +215,81 @@ class GenView(discord.ui.View):
         last = user_cooldowns.get(user.id, 0)
 
         if now - last < GEN_COOLDOWN:
-            restante = int(GEN_COOLDOWN - (now - last))
-            await interaction.response.send_message(
-                f"⏳ Cooldown {restante}s",
-                ephemeral=True
-            )
+            await interaction.response.send_message("⏳ Cooldown ativo", ephemeral=True)
             return
 
         if get_credits(user.id) < price:
-            await interaction.response.send_message(
-                f"❌ Need {price} credits",
-                ephemeral=True
-            )
+            await interaction.response.send_message("❌ Créditos insuficientes", ephemeral=True)
             return
 
         produto = gerar_produto(tipo)
         hit = roll_hit(tipo)
 
         if not produto:
-            await interaction.response.send_message(
-                "⚠️ OUT OF STOCK",
-                ephemeral=True
-            )
+            await interaction.response.send_message("⚠️ OUT OF STOCK", ephemeral=True)
             return
 
         remove_credits(user.id, price)
         user_cooldowns[user.id] = time.time()
 
-        # ===== LOG TXT =====
         with lock:
             with open(GEN_LOG_FILE, "a") as f:
                 f.write(f"{datetime.utcnow()} | {user.id} | {tipo} | {hit} | {produto}\n")
 
-        # ===== LOG CANAL =====
         canal = bot.get_channel(GEN_LOG_CHANNEL_ID)
         if canal:
             await canal.send(
-                f"🧾 GEN\n"
-                f"User: <@{user.id}>\n"
-                f"Tier: {tipo.upper()}\n"
-                f"Hit: {hit}\n"
-                f"Key: {produto}"
+                f"{BRAND}\nUser: <@{user.id}>\nTier: {tipo.upper()}\nHit: {hit}\nKey: {produto}"
             )
 
-        # ===== DM USER =====
         try:
             await user.send(
-                f"⛧ VIPER GEN ⛧\n"
-                f"🛒 Produto: {tipo.upper()}\n"
-                f"🎯 Hit: {hit}\n"
-                f"🔑 {produto}"
+                f"{BRAND}\nProduto: {tipo.upper()}\nHit: {hit}\nKey: {produto}"
             )
-            await interaction.response.send_message(
-                "✔ Delivered",
-                ephemeral=True
-            )
+            await interaction.response.send_message("✔ Entregue", ephemeral=True)
         except:
-            await interaction.response.send_message(
-                "❌ Enable DM",
-                ephemeral=True
-            )
+            await interaction.response.send_message("❌ Ative DM", ephemeral=True)
 
     @discord.ui.button(label="LOW", style=discord.ButtonStyle.danger)
-    async def low(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.process(interaction, "low")
+    async def low(self, i, b): await self.process(i, "low")
 
     @discord.ui.button(label="MEDIUM", style=discord.ButtonStyle.primary)
-    async def medium(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.process(interaction, "medium")
+    async def medium(self, i, b): await self.process(i, "medium")
 
     @discord.ui.button(label="HIGH", style=discord.ButtonStyle.success)
-    async def high(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.process(interaction, "high")
+    async def high(self, i, b): await self.process(i, "high")
 
 # ================= COMMANDS =================
 
 @bot.command()
+async def painel(ctx):
+    embed = discord.Embed(title=BRAND, color=0xff003c)
+    for tier in PRICES:
+        o = ODDS[tier]
+        txt = f"💰 {o['robux']}%\n📦 {o['limited']}%\n✨ {o['rare']}%\n🧼 {o['clean']}%"
+        embed.add_field(name=f"{tier.upper()} — {PRICES[tier]} créditos", value=txt)
+    await ctx.send(embed=embed, view=GenView())
+
+@bot.command()
 async def credits(ctx):
-    c = get_credits(ctx.author.id)
-    await ctx.send(f"💳 {ctx.author.mention} você tem {c} créditos.")
+    await ctx.send(f"💳 {ctx.author.mention} créditos: {get_credits(ctx.author.id)}")
 
 @bot.command()
 async def buycredits(ctx, amount: int):
-    oid, total = create_order(ctx.author.id, amount)
+    oid = f"VX-{random.randint(1000,9999)}"
+    total = round(amount * PRICE_PER_CREDIT, 2)
+
+    orders = load_json(ORDERS_FILE)
+    orders[oid] = {
+        "user": ctx.author.id,
+        "credits": amount,
+        "total": total,
+        "status": "waiting"
+    }
+    save_json(ORDERS_FILE, orders)
+
     await ctx.send(
-        f"ORDER {oid}\nCredits: {amount}\nTotal: R${total}\n\nPIX: {PIX_KEY}\nTitular: {PIX_NAME}\n\nStatus: WAITING PAYMENT"
+        f"{BRAND}\nORDER {oid}\nCréditos: {amount}\nTotal: R${total}\nPIX: {PIX_KEY}"
     )
 
 @bot.command()
@@ -327,76 +297,47 @@ async def buycredits(ctx, amount: int):
 async def confirm(ctx, order_id: str):
     orders = load_json(ORDERS_FILE)
     if order_id not in orders:
-        await ctx.send("❌ Pedido não encontrado.")
+        await ctx.send("Pedido não encontrado")
         return
 
-    order = orders[order_id]
-    if order["status"] == "paid":
-        await ctx.send("Já confirmado.")
+    o = orders[order_id]
+    if o["status"] == "paid":
+        await ctx.send("Já pago")
         return
 
-    add_credits(order["user"], order["credits"])
-    order["status"] = "paid"
+    add_credits(o["user"], o["credits"])
+    o["status"] = "paid"
     save_json(ORDERS_FILE, orders)
 
-    await ctx.send(f"✅ Pedido {order_id} confirmado.")
+    await ctx.send(f"Confirmado {order_id}")
 
-    user = await bot.fetch_user(order["user"])
+    user = await bot.fetch_user(o["user"])
     try:
-        await user.send(f"💰 Créditos adicionados: {order['credits']}")
+        await user.send(f"{BRAND}\nCréditos: {o['credits']}")
     except:
         pass
-
-@bot.command()
-async def painel(ctx):
-    embed = discord.Embed(
-        title="⛧ V I P E R   G E N ⛧",
-        description="THE BEST ROBLOX ACCOUNT GENERATOR",
-        color=0xff003c
-    )
-
-    for tier in ["low", "medium", "high"]:
-        odds = ODDS[tier]
-        txt = (
-            f"💰 Robux: {odds['robux']}%\n"
-            f"📦 Limited: {odds['limited']}%\n"
-            f"✨ Rare: {odds['rare']}%\n"
-            f"🧼 Clean: {odds['clean']}%"
-        )
-        embed.add_field(
-            name=f"{tier.upper()} — {PRICES[tier]} credits",
-            value=txt,
-            inline=False
-        )
-
-    await ctx.send(embed=embed, view=GenView())
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def restock(ctx, *, texto: str):
     parsed = parse_viper_blocks(texto)
-
     if not parsed:
-        await ctx.send("❌ Nenhum resultado detectado.")
+        await ctx.send("Nada detectado")
         return
 
-    save_parsed_results(parsed)
+    tier_counts = save_parsed_results(parsed)
 
-    await ctx.send(f"✅ Restockado: {len(parsed)} contas.")
-
-    lista = [p.strip() for p in produtos.split("\n") if p.strip()]
-    with lock:
-        with open(STOCK_FILES[tipo], "a") as f:
-            f.write("\n".join(lista) + "\n")
+    await ctx.send(f"{BRAND}\nRestock: {len(parsed)} contas")
 
     canal = bot.get_channel(RESTOCK_CHANNEL_ID)
     if canal:
-        ping = f"<@&{RESTOCK_ROLE_ID}> " if RESTOCK_ROLE_ID else ""
-        await canal.send(
-            f"{ping}🔔 RESTOCK {tipo.upper()} | {len(lista)}"
-        )
+        msg = f"{BRAND}\n"
+        for t, c in tier_counts.items():
+            if c:
+                msg += f"{t.upper()}: {c}\n"
 
-    await ctx.send("Restock OK")
+        ping = f"<@&{RESTOCK_ROLE_ID}>\n" if RESTOCK_ROLE_ID else ""
+        await canal.send(ping + msg)
 
 @bot.command()
 async def stock(ctx, tipo: str = None):
@@ -405,22 +346,20 @@ async def stock(ctx, tipo: str = None):
         if tipo not in STOCK_FILES:
             await ctx.send("Tipo inválido")
             return
-        file = STOCK_FILES[tipo]
-        if not os.path.exists(file):
-            await ctx.send("0")
-            return
-        with open(file) as f:
-            linhas = [l for l in f if l.strip()]
-        await ctx.send(f"{tipo.upper()}: {len(linhas)}")
+        f = STOCK_FILES[tipo]
+        qtd = 0
+        if os.path.exists(f):
+            with open(f) as arq:
+                qtd = len([l for l in arq if l.strip()])
+        await ctx.send(f"{tipo.upper()}: {qtd}")
         return
 
-    msg = "STOCK:\n"
-    for t, file in STOCK_FILES.items():
-        if not os.path.exists(file):
-            qtd = 0
-        else:
-            with open(file) as f:
-                qtd = len([l for l in f if l.strip()])
+    msg = "STOCK\n"
+    for t, f in STOCK_FILES.items():
+        qtd = 0
+        if os.path.exists(f):
+            with open(f) as arq:
+                qtd = len([l for l in arq if l.strip()])
         msg += f"{t.upper()}: {qtd}\n"
     await ctx.send(msg)
 
@@ -428,103 +367,60 @@ async def stock(ctx, tipo: str = None):
 async def stats(ctx):
     gens = 0
     users = set()
-    tier_count = {"low": 0, "medium": 0, "high": 0}
     credits_spent = 0
+    tier_count = {"low": 0, "medium": 0, "high": 0}
 
     if os.path.exists(GEN_LOG_FILE):
-        with open(GEN_LOG_FILE, "r") as f:
+        with open(GEN_LOG_FILE) as f:
             for line in f:
-                parts = line.strip().split("|")
-                if len(parts) < 5:
+                p = line.split("|")
+                if len(p) < 5:
                     continue
-                _, user_id, tier, hit, key = [p.strip() for p in parts]
+                _, uid, tier, _, _ = [x.strip() for x in p]
                 gens += 1
-                users.add(user_id)
+                users.add(uid)
                 if tier in tier_count:
                     tier_count[tier] += 1
                     credits_spent += PRICES[tier]
 
-    total_users = len(users)
     lucro = round(credits_spent * PRICE_PER_CREDIT, 2)
+    top = max(tier_count, key=tier_count.get).upper() if gens else "N/A"
 
-    top_tier = max(tier_count, key=tier_count.get).upper() if gens > 0 else "N/A"
+    e = discord.Embed(title="⛧ VIPER ANALYTICS ⛧", color=0x00ffe1)
+    e.add_field(name="Users", value=len(users))
+    e.add_field(name="Generations", value=gens)
+    e.add_field(name="Credits", value=credits_spent)
+    e.add_field(name="Revenue", value=lucro)
+    e.add_field(name="Top Tier", value=top)
 
-    embed = discord.Embed(
-        title="⛧ VIPER ANALYTICS ⛧",
-        color=0x00ffe1
-    )
-
-    embed.add_field(name="Users", value=str(total_users))
-    embed.add_field(name="Generations", value=str(gens))
-    embed.add_field(name="Credits Spent", value=str(credits_spent))
-    embed.add_field(name="Revenue (R$)", value=str(lucro))
-    embed.add_field(name="Top Tier", value=top_tier)
-
-    await ctx.send(embed=embed)
-
-@bot.command()
-async def help(ctx):
-    embed = discord.Embed(
-        title="⛧ VIPER SYSTEM HELP ⛧",
-        description="Command Matrix • Neural Interface",
-        color=0xff003c
-    )
-
-    embed.add_field(
-        name="👤 USER",
-        value=(
-            "`!painel` • abrir gerador\n"
-            "`!credits` • ver saldo\n"
-            "`!buycredits <qtd>` • comprar créditos"
-        ),
-        inline=False
-    )
-
-    embed.add_field(
-        name="🛠️ ADMIN",
-        value=(
-            "`!restock <tier>` • adicionar stock\n"
-            "`!stock [tier]` • ver estoque\n"
-            "`!confirm <order>` • confirmar pagamento\n"
-            "`!orderinfo <id>` • info pedido"
-        ),
-        inline=False
-    )
-
-    embed.add_field(
-        name="📊 ANALYTICS",
-        value=(
-            "`!stats` • visão geral\n"
-            "`!economy` • financeiro\n"
-            "`!leaderboard` • top usuários\n"
-            "`!userstats <user>` • stats usuário\n"
-            "`!hitrate` • taxa de hits"
-        ),
-        inline=False
-    )
-
-    embed.set_footer(text="Viper Systems • Command Matrix")
-
-    await ctx.send(embed=embed)
+    await ctx.send(embed=e)
 
 @bot.command()
 async def hitrate(ctx):
     hit = load_hitrate()
-
     if hit["total"] == 0:
-        await ctx.send("Sem dados.")
+        await ctx.send("Sem dados")
         return
 
     robux_pct = round(hit["robux"] / hit["total"] * 100, 1)
     limited_pct = round(hit["limited"] / hit["total"] * 100, 1)
 
     await ctx.send(
-        f"📊 HITRATE\n"
-        f"Total: {hit['total']}\n"
-        f"Robux: {hit['robux']} ({robux_pct}%)\n"
-        f"Limited: {hit['limited']} ({limited_pct}%)\n"
-        f"RAP Total: {hit['rap_total']}"
-)
+        f"{BRAND}\nTotal: {hit['total']}\nRobux: {robux_pct}%\nLimited: {limited_pct}%\nRAP: {hit['rap_total']}"
+    )
+
+@bot.command()
+async def help(ctx):
+    txt = (
+        "**USER**\n"
+        "!painel\n!credits\n!buycredits <qtd>\n\n"
+        "**ADMIN**\n"
+        "!restock\n!stock [tier]\n!confirm <id>\n\n"
+        "**DATA**\n"
+        "!stats\n!hitrate"
+    )
+    await ctx.send(f"{BRAND}\n{txt}")
+
 # ================= RUN =================
 
 bot.run(TOKEN)
