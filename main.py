@@ -547,6 +547,25 @@ async def help(ctx):
     embed.set_footer(text="Viper Systems • Command Matrix")
 
     await ctx.send(embed=embed)
+
+@bot.command()
+async def hitrate(ctx):
+    hit = load_hitrate()
+
+    if hit["total"] == 0:
+        await ctx.send("Sem dados.")
+        return
+
+    robux_pct = round(hit["robux"] / hit["total"] * 100, 1)
+    limited_pct = round(hit["limited"] / hit["total"] * 100, 1)
+
+    await ctx.send(
+        f"📊 HITRATE\n"
+        f"Total: {hit['total']}\n"
+        f"Robux: {hit['robux']} ({robux_pct}%)\n"
+        f"Limited: {hit['limited']} ({limited_pct}%)\n"
+        f"RAP Total: {hit['rap_total']}"
+)
 # ================= RUN =================
 
 bot.run(TOKEN)
