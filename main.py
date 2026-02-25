@@ -190,48 +190,7 @@ def gerar_produto(tipo):
 
 # ================= HITRATE =================
 
-@bot.command()
-async def hitrate(ctx):
-    total = 0
-    hits = {"robux": 0, "limited": 0, "rare": 0, "clean": 0}
 
-    if not os.path.exists(GEN_LOG_FILE):
-        await ctx.send("Sem dados ainda.")
-        return
-
-    with open(GEN_LOG_FILE, "r") as f:
-        for line in f:
-            parts = line.strip().split("|")
-            if len(parts) < 5:
-                continue
-            _, user, tier, hit, key = [p.strip() for p in parts]
-            total += 1
-            if hit in hits:
-                hits[hit] += 1
-
-    if total == 0:
-        await ctx.send("Sem gens ainda.")
-        return
-
-    def pct(x):
-        return round((x / total) * 100, 2)
-
-    hit_total = hits["robux"] + hits["limited"] + hits["rare"]
-    hitrate_real = pct(hit_total)
-
-    embed = discord.Embed(
-        title="⛧ VIPER HITRATE ⛧",
-        color=0xff003c
-    )
-
-    embed.add_field(name="Total Gens", value=str(total))
-    embed.add_field(name="Hitrate Real", value=f"{hitrate_real}%")
-    embed.add_field(name="Robux", value=f"{pct(hits['robux'])}%")
-    embed.add_field(name="Limited", value=f"{pct(hits['limited'])}%")
-    embed.add_field(name="Rare", value=f"{pct(hits['rare'])}%")
-    embed.add_field(name="Clean", value=f"{pct(hits['clean'])}%")
-
-    await ctx.send(embed=embed)
     
 # ================= ODDS =================
 
