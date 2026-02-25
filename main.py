@@ -207,11 +207,7 @@ def create_order(user_id, credits):
 
 # ================= GEN VIEW =================
 
-class GenView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    async def process(self, interaction, tipo):
+async def process(self, interaction, tipo):
     user = interaction.user
     price = PRICES[tipo]
 
@@ -234,18 +230,26 @@ class GenView(discord.ui.View):
     remove_credits(user.id, price)
     user_cooldowns[user.id] = time.time()
 
-    # ========= PARSE PRODUTO =========
-    texto_entrega = ""
+    # ===== PARSE PRODUTO =====
     if produto.startswith("ROBux:"):
-        _, val, userp, passp = produto.replace(":", "|", 1).split("|")
-        texto_entrega = f"💰 Robux: {val}\n👤 User: {userp}\n🔑 Pass: {passp}"
+        parts = produto.split("|")
+        val = parts[0].split(":", 1)[1]
+        userp = parts[1]
+        passp = parts[2]
+
+        texto_entrega = (
+            f"💰 Robux: {val}\n"
+            f"👤 User: {userp}\n"
+            f"🔑 Pass: {passp}"
+        )
 
     elif produto.startswith("LIMITED:"):
         parts = produto.split("|")
-        item = parts[0].split(":",1)[1]
+        item = parts[0].split(":", 1)[1]
         rap = parts[1]
         userp = parts[2]
         passp = parts[3]
+
         texto_entrega = (
             f"🎩 Limited: {item}\n"
             f"💎 RAP: {rap}\n"
@@ -255,7 +259,7 @@ class GenView(discord.ui.View):
     else:
         texto_entrega = produto
 
-    # ========= LOG =========
+    # ===== LOG =====
     with lock:
         with open(GEN_LOG_FILE, "a") as f:
             f.write(f"{datetime.utcnow()}|{user.id}|{tipo}|{produto}\n")
@@ -266,7 +270,7 @@ class GenView(discord.ui.View):
             f"GEN\nUser: <@{user.id}>\nTier: {tipo.upper()}\n{texto_entrega}"
         )
 
-    # ========= DM =========
+    # ===== DM =====
     try:
         await user.send(
             f"VIPER GEN\nProduto: {tipo.upper()}\n\n{texto_entrega}"
@@ -274,18 +278,6 @@ class GenView(discord.ui.View):
         await interaction.response.send_message("✔ Entregue", ephemeral=True)
     except:
         await interaction.response.send_message("❌ DM fechada", ephemeral=True)
-
-    @discord.ui.button(label="LOW", style=discord.ButtonStyle.secondary)
-    async def low(self, interaction, button):
-        await self.process(interaction, "low")
-
-    @discord.ui.button(label="MEDIUM", style=discord.ButtonStyle.primary)
-    async def medium(self, interaction, button):
-        await self.process(interaction, "medium")
-
-    @discord.ui.button(label="HIGH", style=discord.ButtonStyle.success)
-    async def high(self, interaction, button):
-        await self.process(interaction, "high")
 
 # ================= COMMANDS =================
 
