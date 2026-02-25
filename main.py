@@ -212,45 +212,68 @@ class GenView(discord.ui.View):
         super().__init__(timeout=None)
 
     async def process(self, interaction, tipo):
-        user = interaction.user
-        price = PRICES[tipo]
+    user = interaction.user
+    price = PRICES[tipo]
 
-        now = time.time()
-        last = user_cooldowns.get(user.id, 0)
+    now = time.time()
+    last = user_cooldowns.get(user.id, 0)
 
-        if now - last < GEN_COOLDOWN:
-            await interaction.response.send_message("⏳ Cooldown", ephemeral=True)
-            return
+    if now - last < GEN_COOLDOWN:
+        await interaction.response.send_message("⏳ Cooldown", ephemeral=True)
+        return
 
-        if get_credits(user.id) < price:
-            await interaction.response.send_message("❌ Sem créditos", ephemeral=True)
-            return
+    if get_credits(user.id) < price:
+        await interaction.response.send_message("❌ Sem créditos", ephemeral=True)
+        return
 
-        produto = gerar_produto(tipo)
-        if not produto:
-            await interaction.response.send_message("⚠️ Sem stock", ephemeral=True)
-            return
+    produto = gerar_produto(tipo)
+    if not produto:
+        await interaction.response.send_message("⚠️ Sem stock", ephemeral=True)
+        return
 
-        remove_credits(user.id, price)
-        user_cooldowns[user.id] = time.time()
+    remove_credits(user.id, price)
+    user_cooldowns[user.id] = time.time()
 
-        with lock:
-            with open(GEN_LOG_FILE, "a") as f:
-                f.write(f"{datetime.utcnow()}|{user.id}|{tipo}|{produto}\n")
+    # ========= PARSE PRODUTO =========
+    texto_entrega = ""
+    if produto.startswith("ROBux:"):
+        _, val, userp, passp = produto.replace(":", "|", 1).split("|")
+        texto_entrega = f"💰 Robux: {val}\n👤 User: {userp}\n🔑 Pass: {passp}"
 
-        canal = bot.get_channel(GEN_LOG_CHANNEL_ID)
-        if canal:
-            await canal.send(
-                f"GEN\nUser: <@{user.id}>\nTier: {tipo.upper()}\nKey: {produto}"
-            )
+    elif produto.startswith("LIMITED:"):
+        parts = produto.split("|")
+        item = parts[0].split(":",1)[1]
+        rap = parts[1]
+        userp = parts[2]
+        passp = parts[3]
+        texto_entrega = (
+            f"🎩 Limited: {item}\n"
+            f"💎 RAP: {rap}\n"
+            f"👤 User: {userp}\n"
+            f"🔑 Pass: {passp}"
+        )
+    else:
+        texto_entrega = produto
 
-        try:
-            await user.send(
-                f"VIPER GEN\nProduto: {tipo.upper()}\n{produto}"
-            )
-            await interaction.response.send_message("✔ Entregue", ephemeral=True)
-        except:
-            await interaction.response.send_message("❌ DM fechada", ephemeral=True)
+    # ========= LOG =========
+    with lock:
+        with open(GEN_LOG_FILE, "a") as f:
+            f.write(f"{datetime.utcnow()}|{user.id}|{tipo}|{produto}\n")
+
+    canal = bot.get_channel(GEN_LOG_CHANNEL_ID)
+    if canal:
+        await canal.send(
+            f"GEN\nUser: <@{user.id}>\nTier: {tipo.upper()}\n{texto_entrega}"
+        )
+
+    # ========= DM =========
+    try:
+        await user.send(
+            f"VIPER GEN\nProduto: {tipo.upper()}\n\n{texto_entrega}"
+        )
+        await interaction.response.send_message("✔ Entregue", ephemeral=True)
+    except:
+        await interaction.response.send_message("❌ DM fechada", ephemeral=True)
 
     @discord.ui.button(label="LOW", style=discord.ButtonStyle.secondary)
     async def low(self, interaction, button):
