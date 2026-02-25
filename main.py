@@ -64,6 +64,70 @@ def save_json(path, data):
     with open(path, "w") as f:
         json.dump(data, f, indent=4)
 
+def load_hitrate():
+    if not os.path.exists(HITRATE_FILE):
+        return {"total": 0, "robux": 0, "limited": 0, "rap_total": 0}
+    with open(HITRATE_FILE, "r") as f:
+        return json.load(f)
+
+def save_hitrate(data):
+    with open(HITRATE_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
+def parse_viper_blocks(text):
+    blocks = text.split("VIPER GEN RESULT")
+    results = []
+
+    for b in blocks:
+        b = b.strip()
+        if not b:
+            continue
+
+        tier = None
+        if "Tier:" in b:
+            tier = b.split("Tier:")[1].split("\n")[0].strip().lower()
+
+        user = None
+        if "User:" in b:
+            user = b.split("User:")[1].split("\n")[0].strip()
+
+        pwd = None
+        if "Pass:" in b:
+            pwd = b.split("Pass:")[1].split("\n")[0].strip()
+
+        if "Robux:" in b:
+            val = b.split("Robux:")[1].split("\n")[0].strip()
+            val = int("".join([c for c in val if c.isdigit()]))
+
+            results.append({
+                "tipo": "robux",
+                "valor": val,
+                "tier": tier,
+                "user": user,
+                "pass": pwd
+            })
+
+        elif "Limited:" in b:
+            item = b.split("Limited:")[1].split("\n")[0].strip()
+
+            rap = 0
+            if "RAP" in b or "Value:" in b:
+                line = b.split("Value:")[1].split("\n")[0]
+                nums = "".join([c for c in line if c.isdigit()])
+                if nums:
+                    rap = int(nums)
+
+            results.append({
+                "tipo": "limited",
+                "item": item,
+                "rap": rap,
+                "tier": tier,
+                "user": user,
+                "pass": pwd
+            })
+
+    return results
+
 # ================= CREDITS =================
 
 def add_credits(user_id, amount):
@@ -84,6 +148,30 @@ def remove_credits(user_id, amount):
     save_json(CREDITS_FILE, data)
     return True
 
+def save_parsed_results(results):
+    hit = load_hitrate()
+
+    for r in results:
+        tier = r["tier"]
+        if tier not in STOCK_FILES:
+            continue
+
+        if r["tipo"] == "robux":
+            line = f"ROBux:{r['valor']}|{r['user']}|{r['pass']}"
+            hit["robux"] += 1
+
+        else:
+            line = f"LIMITED:{r['item']}|{r['rap']}|{r['user']}|{r['pass']}"
+            hit["limited"] += 1
+            hit["rap_total"] += r["rap"]
+
+        with lock:
+            with open(STOCK_FILES[tier], "a") as f:
+                f.write(line + "\n")
+
+        hit["total"] += 1
+
+    save_hitrate(hit)
 # ================= STOCK =================
 
 def gerar_produto(tipo):
