@@ -414,11 +414,16 @@ async def painel(ctx):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def restock(ctx, tipo: str, *, produtos: str):
-    tipo = tipo.lower()
-    if tipo not in STOCK_FILES:
-        await ctx.send("Tipo inválido")
+async def restock(ctx, *, texto: str):
+    parsed = parse_viper_blocks(texto)
+
+    if not parsed:
+        await ctx.send("❌ Nenhum resultado detectado.")
         return
+
+    save_parsed_results(parsed)
+
+    await ctx.send(f"✅ Restockado: {len(parsed)} contas.")
 
     lista = [p.strip() for p in produtos.split("\n") if p.strip()]
     with lock:
