@@ -4,6 +4,7 @@ import json
 import threading
 import os
 import time
+import random
 from datetime import datetime
 
 TOKEN = os.getenv("TOKEN")
@@ -17,11 +18,8 @@ lock = threading.Lock()
 
 # ================= CONFIG =================
 
-PRICES = {
-    "low": 3,
-    "medium": 10,
-    "high": 14
-}
+PRICES = {"low": 3, "medium": 10, "high": 14}
+PRICE_PER_CREDIT = 0.35
 
 STOCK_FILES = {
     "low": "stock_low.txt",
@@ -31,80 +29,94 @@ STOCK_FILES = {
 
 CREDITS_FILE = "credits.json"
 GEN_LOG_FILE = "gen_log.txt"
+ORDERS_FILE = "orders.json"
 
 RESTOCK_CHANNEL_ID = 1475313284583260202
 RESTOCK_ROLE_ID = 1475311889293774939
 GEN_LOG_CHANNEL_ID = 1475984317581627402
 
+PIX_KEY = "vhxzstore@gmail.com"
+PIX_NAME = "VHXZ STORE"
+
 GEN_COOLDOWN = 8
 user_cooldowns = {}
 
-# ================= CREDITS =================
+# ================= UTILS =================
 
-def load_credits():
-    if not os.path.exists(CREDITS_FILE):
+def load_json(path):
+    if not os.path.exists(path):
         return {}
-    with open(CREDITS_FILE, "r") as f:
+    with open(path, "r") as f:
         try:
             return json.load(f)
         except:
             return {}
 
-def save_credits(data):
-    with open(CREDITS_FILE, "w") as f:
+def save_json(path, data):
+    with open(path, "w") as f:
         json.dump(data, f, indent=4)
 
+# ================= CREDITS =================
+
 def add_credits(user_id, amount):
-    data = load_credits()
-    uid = str(user_id)
-    data[uid] = data.get(uid, 0) + amount
-    save_credits(data)
+    data = load_json(CREDITS_FILE)
+    data[str(user_id)] = data.get(str(user_id), 0) + amount
+    save_json(CREDITS_FILE, data)
 
 def get_credits(user_id):
-    data = load_credits()
+    data = load_json(CREDITS_FILE)
     return data.get(str(user_id), 0)
 
-def remove_credits_amount(user_id, amount):
-    data = load_credits()
+def remove_credits(user_id, amount):
+    data = load_json(CREDITS_FILE)
     uid = str(user_id)
-
-    if uid not in data or data[uid] < amount:
+    if data.get(uid, 0) < amount:
         return False
-
     data[uid] -= amount
-    save_credits(data)
+    save_json(CREDITS_FILE, data)
     return True
 
 # ================= STOCK =================
 
 def gerar_produto(tipo):
     file = STOCK_FILES[tipo]
-
     with lock:
         if not os.path.exists(file):
             return None
-
         with open(file, "r") as f:
             linhas = [l.strip() for l in f if l.strip()]
-
         if not linhas:
             return None
-
-        produto = linhas[0]
-        linhas.pop(0)
-
+        produto = linhas.pop(0)
         with open(file, "w") as f:
             f.write("\n".join(linhas))
-
         return produto
 
-# ================= VIEW =================
+# ================= ORDER SYSTEM =================
+
+def create_order(user_id, credits):
+    orders = load_json(ORDERS_FILE)
+    oid = f"VX-{random.randint(1000,9999)}"
+    total = round(credits * PRICE_PER_CREDIT, 2)
+
+    orders[oid] = {
+        "user": user_id,
+        "credits": credits,
+        "total": total,
+        "status": "waiting",
+        "time": str(datetime.utcnow())
+    }
+
+    save_json(ORDERS_FILE, orders)
+    return oid, total
+
+# ================= GEN VIEW =================
 
 class GenView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    async def process(self, interaction: discord.Interaction, tipo: str):
+    async def process(self, interaction, tipo):
         user = interaction.user
         price = PRICES[tipo]
 
@@ -127,7 +139,6 @@ class GenView(discord.ui.View):
             return
 
         produto = gerar_produto(tipo)
-
         if not produto:
             await interaction.response.send_message(
                 "⚠️ OUT OF STOCK",
@@ -135,34 +146,25 @@ class GenView(discord.ui.View):
             )
             return
 
-        remove_credits_amount(user.id, price)
+        remove_credits(user.id, price)
         user_cooldowns[user.id] = time.time()
 
-        # LOG TXT
+        # log txt
         with lock:
             with open(GEN_LOG_FILE, "a") as f:
-                f.write(f"{datetime.utcnow()} | {user.id} | {tipo} | {produto}\n")
+                f.write(f"{datetime.utcnow()} | {user.id} | {tipo}\n")
 
-        # LOG DISCORD
-        try:
-            canal = bot.get_channel(GEN_LOG_CHANNEL_ID)
-            if canal:
-                await canal.send(
-                    f"🧾 GEN LOG\n"
-                    f"User: <@{user.id}>\n"
-                    f"Tier: {tipo.upper()}\n"
-                    f"Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
-                )
-        except:
-            pass
+        # log canal
+        canal = bot.get_channel(GEN_LOG_CHANNEL_ID)
+        if canal:
+            await canal.send(
+                f"🧾 GEN\nUser: <@{user.id}>\nTier: {tipo.upper()}"
+            )
 
         try:
             await user.send(
-                f"⛧ VIPER GEN ⛧\n"
-                f"TIER: {tipo.upper()}\n"
-                f"KEY: {produto}"
+                f"⛧ VIPER GEN ⛧\nTIER: {tipo.upper()}\nKEY: {produto}"
             )
-
             await interaction.response.send_message(
                 "✔ Delivered",
                 ephemeral=True
@@ -185,7 +187,7 @@ class GenView(discord.ui.View):
     async def high(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process(interaction, "high")
 
-# ================= COMANDOS =================
+# ================= COMMANDS =================
 
 @bot.command()
 async def credits(ctx):
@@ -193,111 +195,88 @@ async def credits(ctx):
     await ctx.send(f"💳 {ctx.author.mention} você tem {c} créditos.")
 
 @bot.command()
-@commands.has_permissions(administrator=True)
-async def addcredits(ctx, user: discord.Member, amount: int):
-    add_credits(user.id, amount)
-    await ctx.send(f"✅ {amount} créditos adicionados para {user.mention}.")
+async def buycredits(ctx, amount: int):
+    oid, total = create_order(ctx.author.id, amount)
+    await ctx.send(
+        f"ORDER {oid}\nCredits: {amount}\nTotal: R${total}\n\nPIX: {PIX_KEY}\nTitular: {PIX_NAME}\n\nStatus: WAITING PAYMENT"
+    )
 
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def removecredits(ctx, user: discord.Member, amount: int):
-    data = load_credits()
-    uid = str(user.id)
-
-    if uid not in data or data[uid] < amount:
-        await ctx.send("❌ Créditos insuficientes.")
+async def confirm(ctx, order_id: str):
+    orders = load_json(ORDERS_FILE)
+    if order_id not in orders:
+        await ctx.send("❌ Pedido não encontrado.")
         return
 
-    data[uid] -= amount
-    save_credits(data)
+    order = orders[order_id]
+    if order["status"] == "paid":
+        await ctx.send("Já confirmado.")
+        return
 
-    await ctx.send(f"➖ {amount} créditos removidos de {user.mention}.")
+    add_credits(order["user"], order["credits"])
+    order["status"] = "paid"
+    save_json(ORDERS_FILE, orders)
+
+    await ctx.send(f"✅ Pedido {order_id} confirmado.")
+
+    user = await bot.fetch_user(order["user"])
+    try:
+        await user.send(f"💰 Créditos adicionados: {order['credits']}")
+    except:
+        pass
 
 @bot.command()
 async def painel(ctx):
     embed = discord.Embed(
         title="⛧ V I P E R   G E N ⛧",
-        description=(
-            "⚠️ Premium Roblox Account Market\n"
-            "━━━━━━━━━━━━━━━━━━━\n"
-            "💠 Possible hits:\n"
-            "• Robux\n"
-            "• Limiteds\n"
-            "• Rare items\n"
-            "• Old join\n"
-            "━━━━━━━━━━━━━━━━━━━\n"
-            "🧬 SELECT TIER"
-        ),
+        description="NEURAL ACCOUNT GENERATOR",
         color=0xff003c
     )
-
-    embed.add_field(name="🔻 LOW", value="3 credits", inline=True)
-    embed.add_field(name="🔺 MEDIUM", value="10 credits", inline=True)
-    embed.add_field(name="💎 HIGH", value="14 credits", inline=True)
-    embed.set_footer(text="Viper Systems • CyberGen Division")
-
+    embed.add_field(name="LOW", value="3 credits")
+    embed.add_field(name="MEDIUM", value="10 credits")
+    embed.add_field(name="HIGH", value="14 credits")
     await ctx.send(embed=embed, view=GenView())
-
-# ================= RESTOCK =================
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def restock(ctx, tipo: str, *, produtos: str):
     tipo = tipo.lower()
-
     if tipo not in STOCK_FILES:
-        await ctx.send("❌ Tipo inválido.")
+        await ctx.send("Tipo inválido")
         return
 
-    file = STOCK_FILES[tipo]
     lista = [p.strip() for p in produtos.split("\n") if p.strip()]
-
-    if not lista:
-        await ctx.send("❌ Nenhum produto válido.")
-        return
-
     with lock:
-        with open(file, "a") as f:
+        with open(STOCK_FILES[tipo], "a") as f:
             f.write("\n".join(lista) + "\n")
 
-    await ctx.send(f"✅ {len(lista)} adicionados ao {tipo}.")
+    canal = bot.get_channel(RESTOCK_CHANNEL_ID)
+    if canal:
+        ping = f"<@&{RESTOCK_ROLE_ID}> " if RESTOCK_ROLE_ID else ""
+        await canal.send(
+            f"{ping}🔔 RESTOCK {tipo.upper()} | {len(lista)}"
+        )
 
-    try:
-        canal = bot.get_channel(RESTOCK_CHANNEL_ID)
-        if canal:
-            ping = f"<@&{RESTOCK_ROLE_ID}> " if RESTOCK_ROLE_ID else ""
-            await canal.send(
-                f"{ping}🔔 RESTOCK\n"
-                f"Tier: {tipo.upper()}\n"
-                f"Qty: {len(lista)}\n"
-                f"By: {ctx.author.mention}"
-            )
-    except:
-        pass
-
-# ================= STOCK =================
+    await ctx.send("Restock OK")
 
 @bot.command()
-@commands.has_permissions(administrator=True)
 async def stock(ctx, tipo: str = None):
     if tipo:
         tipo = tipo.lower()
         if tipo not in STOCK_FILES:
-            await ctx.send("❌ Tipo inválido.")
+            await ctx.send("Tipo inválido")
             return
-
         file = STOCK_FILES[tipo]
         if not os.path.exists(file):
             await ctx.send("0")
             return
-
-        with open(file, "r") as f:
-            linhas = [l.strip() for l in f if l.strip()]
-
-        await ctx.send(f"📦 {tipo.upper()} ({len(linhas)})")
+        with open(file) as f:
+            linhas = [l for l in f if l.strip()]
+        await ctx.send(f"{tipo.upper()}: {len(linhas)}")
         return
 
-    msg = "📦 STOCK:\n"
+    msg = "STOCK:\n"
     for t, file in STOCK_FILES.items():
         if not os.path.exists(file):
             qtd = 0
@@ -305,7 +284,6 @@ async def stock(ctx, tipo: str = None):
             with open(file) as f:
                 qtd = len([l for l in f if l.strip()])
         msg += f"{t.upper()}: {qtd}\n"
-
     await ctx.send(msg)
 
 # ================= RUN =================
