@@ -257,7 +257,7 @@ async def confirm(ctx, order_id: str):
 async def painel(ctx):
     embed = discord.Embed(
         title="⛧ V I P E R   G E N ⛧",
-        description="NEURAL ACCOUNT GENERATOR",
+        description="THE BEST ROBLOX ACCOUNT GENERATOR",
         color=0xff003c
     )
 
@@ -360,6 +360,51 @@ async def stats(ctx):
     embed.add_field(name="Credits Spent", value=str(credits_spent))
     embed.add_field(name="Revenue (R$)", value=str(lucro))
     embed.add_field(name="Top Tier", value=top_tier)
+
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def help(ctx):
+    embed = discord.Embed(
+        title="⛧ VIPER SYSTEM HELP ⛧",
+        description="Command Matrix • Neural Interface",
+        color=0xff003c
+    )
+
+    embed.add_field(
+        name="👤 USER",
+        value=(
+            "`!painel` • abrir gerador\n"
+            "`!credits` • ver saldo\n"
+            "`!buycredits <qtd>` • comprar créditos"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🛠️ ADMIN",
+        value=(
+            "`!restock <tier>` • adicionar stock\n"
+            "`!stock [tier]` • ver estoque\n"
+            "`!confirm <order>` • confirmar pagamento\n"
+            "`!orderinfo <id>` • info pedido"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="📊 ANALYTICS",
+        value=(
+            "`!stats` • visão geral\n"
+            "`!economy` • financeiro\n"
+            "`!leaderboard` • top usuários\n"
+            "`!userstats <user>` • stats usuário\n"
+            "`!hitrate` • taxa de hits"
+        ),
+        inline=False
+    )
+
+    embed.set_footer(text="Viper Systems • Command Matrix")
 
     await ctx.send(embed=embed)
 # ================= RUN =================
