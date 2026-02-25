@@ -4,20 +4,21 @@ import json
 import threading
 import os
 import time
-import re
 from datetime import datetime
+import random
 
+# ================= CONFIGURAÇÕES =================
 TOKEN = os.getenv("TOKEN")
 PREFIX = "!"
 
 intents = discord.Intents.default()
 intents.message_content = True
-
 bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
-lock = threading.Lock()
+lock = threading.Lock()  # para evitar conflito de escrita em arquivos
 
-PRICES = {"low": 3, "medium": 10, "high": 14}
-PRICE_PER_CREDIT = 0.35
+# ===== Preços, créditos e arquivos =====
+PRICES = {"low": 3, "medium": 10, "high": 14}  # preço em créditos por tier
+PRICE_PER_CREDIT = 0.35  # R$ por crédito
 
 STOCK_FILES = {
     "low": "stock_low.txt",
@@ -26,45 +27,60 @@ STOCK_FILES = {
 }
 
 CREDITS_FILE = "credits.json"
+ORDERS_FILE = "orders.json"
 GEN_LOG_FILE = "gen_log.txt"
-HITRATE_FILE = "hitrate.json"
 
 RESTOCK_CHANNEL_ID = 1474702726389567588
 RESTOCK_ROLE_ID = 1475311889293774939
 GEN_LOG_CHANNEL_ID = 1475984317581627402
 
-GEN_COOLDOWN = 8
+GEN_COOLDOWN = 8  # segundos entre gerações para o mesmo usuário
 user_cooldowns = {}
 
-# ================= JSON =================
+PIX_KEY = "vhxzstore@gmail.com"
+PIX_NAME = "VHXZ STORE"
 
+# ================= FUNÇÕES DE JSON =================
 def load_json(path):
+    """Carrega um arquivo JSON, retorna {} se não existir ou erro."""
     if not os.path.exists(path):
         return {}
-    try:
-        with open(path, "r") as f:
+    with open(path, "r") as f:
+        try:
             return json.load(f)
-    except:
-        return {}
+        except:
+            return {}
 
 def save_json(path, data):
+    """Salva um dicionário em arquivo JSON."""
     with open(path, "w") as f:
         json.dump(data, f, indent=4)
 
-# ================= HITRATE =================
+# ================= FUNÇÕES DE CRÉDITOS =================
+def add_credits(user_id, amount):
+    """Adiciona créditos a um usuário."""
+    data = load_json(CREDITS_FILE)
+    data[str(user_id)] = data.get(str(user_id), 0) + amount
+    save_json(CREDITS_FILE, data)
 
-def load_hitrate():
-    data = load_json(HITRATE_FILE)
-    if not data:
-        return {"total": 0, "robux": 0, "limited": 0, "rap_total": 0}
-    return data
+def get_credits(user_id):
+    """Retorna créditos de um usuário."""
+    data = load_json(CREDITS_FILE)
+    return data.get(str(user_id), 0)
 
-def save_hitrate(data):
-    save_json(HITRATE_FILE, data)
+def remove_credits(user_id, amount):
+    """Remove créditos, retorna False se não tiver saldo suficiente."""
+    data = load_json(CREDITS_FILE)
+    uid = str(user_id)
+    if data.get(uid, 0) < amount:
+        return False
+    data[uid] -= amount
+    save_json(CREDITS_FILE, data)
+    return True
 
-# ================= STOCK =================
-
+# ================= FUNÇÕES DE STOCK =================
 def gerar_produto(tipo):
+    """Pega a primeira conta do stock e remove do arquivo."""
     file = STOCK_FILES[tipo]
     with lock:
         if not os.path.exists(file):
@@ -78,99 +94,26 @@ def gerar_produto(tipo):
             f.write("\n".join(linhas))
         return produto
 
-# ================= PARSER RESTOCK =================
-
-def parse_viper_blocks(text):
-    blocks = re.split(r"VIPER GEN RESULT", text, flags=re.I)
-    results = []
-
-    for b in blocks:
-        b = b.strip()
-        if not b:
-            continue
-
-        tier = None
-        m = re.search(r"Tier:\s*(LOW|MEDIUM|HIGH)", b, re.I)
-        if m:
-            tier = m.group(1).lower()
-
-        user = None
-        m = re.search(r"User:\s*(.+)", b)
-        if m:
-            user = m.group(1).strip()
-
-        pwd = None
-        m = re.search(r"Pass:\s*(.+)", b)
-        if m:
-            pwd = m.group(1).strip()
-
-        robux_match = re.search(r"Robux:\s*([\d,\.]+)", b, re.I)
-        if robux_match:
-            val = int(re.sub(r"\D", "", robux_match.group(1)))
-            results.append(("robux", tier, val, user, pwd))
-            continue
-
-        limited_match = re.search(r"Limited:\s*(.+)", b, re.I)
-        if limited_match:
-            item = limited_match.group(1).strip()
-            rap = 0
-            rap_match = re.search(r"Value:\s*([\d,\.]+)", b, re.I)
-            if rap_match:
-                rap = int(re.sub(r"\D", "", rap_match.group(1)))
-            results.append(("limited", tier, item, rap, user, pwd))
-
-    return results
-
-def save_parsed_results(results):
-    hit = load_hitrate()
-    tier_counts = {"low":0,"medium":0,"high":0}
-
-    for r in results:
-        if r[0] == "robux":
-            _, tier, val, user, pwd = r
-            line = f"ROBux:{val}|{user}|{pwd}"
-            hit["robux"] += 1
-        else:
-            _, tier, item, rap, user, pwd = r
-            line = f"LIMITED:{item}|{rap}|{user}|{pwd}"
-            hit["limited"] += 1
-            hit["rap_total"] += rap
-
-        if tier in STOCK_FILES:
-            with lock:
-                with open(STOCK_FILES[tier], "a") as f:
-                    f.write(line + "\n")
-            tier_counts[tier] += 1
-
-        hit["total"] += 1
-
-    save_hitrate(hit)
-    return tier_counts
-
-# ================= CREDITS =================
-
-def add_credits(user_id, amount):
-    data = load_json(CREDITS_FILE)
-    uid = str(user_id)
-    data[uid] = data.get(uid, 0) + amount
-    save_json(CREDITS_FILE, data)
-
-def get_credits(user_id):
-    data = load_json(CREDITS_FILE)
-    return data.get(str(user_id), 0)
-
-def remove_credits(user_id, amount):
-    data = load_json(CREDITS_FILE)
-    uid = str(user_id)
-    if data.get(uid, 0) < amount:
-        return False
-    data[uid] -= amount
-    save_json(CREDITS_FILE, data)
-    return True
+# ================= ORDERS =================
+def create_order(user_id, credits):
+    """Cria um pedido de créditos para pagamento."""
+    orders = load_json(ORDERS_FILE)
+    oid = f"VX-{random.randint(1000,9999)}"
+    total = round(credits * PRICE_PER_CREDIT, 2)
+    orders[oid] = {
+        "user": user_id,
+        "credits": credits,
+        "total": total,
+        "status": "waiting",
+        "time": str(datetime.utcnow())
+    }
+    save_json(ORDERS_FILE, orders)
+    return oid, total
 
 # ================= GEN VIEW =================
-
 class GenView(discord.ui.View):
+    """View do Discord com botões para gerar LOW, MEDIUM e HIGH."""
+
     def __init__(self):
         super().__init__(timeout=None)
 
@@ -180,13 +123,12 @@ class GenView(discord.ui.View):
 
         now = time.time()
         last = user_cooldowns.get(user.id, 0)
-
         if now - last < GEN_COOLDOWN:
-            await interaction.response.send_message("⏳ Cooldown", ephemeral=True)
+            await interaction.response.send_message(f"⏳ Cooldown {int(GEN_COOLDOWN - (now - last))}s", ephemeral=True)
             return
 
         if get_credits(user.id) < price:
-            await interaction.response.send_message("❌ Sem créditos", ephemeral=True)
+            await interaction.response.send_message("❌ Sem créditos suficientes", ephemeral=True)
             return
 
         produto = gerar_produto(tipo)
@@ -197,31 +139,17 @@ class GenView(discord.ui.View):
         remove_credits(user.id, price)
         user_cooldowns[user.id] = time.time()
 
-        if produto.startswith("ROBux:"):
-            _, userp, passp = produto.split("|")
-            val = produto.split(":",1)[1].split("|")[0]
-            texto = f"💰 Robux: {val}\n👤 User: {userp}\n🔑 Pass: {passp}"
-
-        elif produto.startswith("LIMITED:"):
-            parts = produto.split("|")
-            item = parts[0].split(":",1)[1]
-            rap = parts[1]
-            userp = parts[2]
-            passp = parts[3]
-            texto = f"🎩 Limited: {item}\n💎 RAP: {rap}\n👤 User: {userp}\n🔑 Pass: {passp}"
-        else:
-            texto = produto
-
+        # LOG DE GERAÇÃO
         with lock:
             with open(GEN_LOG_FILE, "a") as f:
                 f.write(f"{datetime.utcnow()}|{user.id}|{tipo}|{produto}\n")
 
         canal = bot.get_channel(GEN_LOG_CHANNEL_ID)
         if canal:
-            await canal.send(f"GEN\nUser: <@{user.id}>\nTier: {tipo.upper()}\n{texto}")
+            await canal.send(f"GEN\nUser: <@{user.id}>\nTier: {tipo.upper()}\n{produto}")
 
         try:
-            await user.send(f"VIPER GEN\nProduto: {tipo.upper()}\n\n{texto}")
+            await user.send(f"VIPER GEN\nTier: {tipo.upper()}\n{produto}")
             await interaction.response.send_message("✔ Entregue", ephemeral=True)
         except:
             await interaction.response.send_message("❌ DM fechada", ephemeral=True)
@@ -238,32 +166,126 @@ class GenView(discord.ui.View):
     async def high(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process(interaction, "high")
 
-# ================= COMMANDS =================
-
+# ================= COMANDOS =================
 @bot.command()
 async def painel(ctx):
+    """Abre o painel com os botões de geração."""
     embed = discord.Embed(title="VIPER GEN", description="Escolha o tier", color=0xff003c)
     for t in PRICES:
         embed.add_field(name=t.upper(), value=f"{PRICES[t]} credits", inline=False)
     await ctx.send(embed=embed, view=GenView())
 
 @bot.command()
+async def credits(ctx):
+    """Mostra os créditos do usuário."""
+    c = get_credits(ctx.author.id)
+    await ctx.send(f"💳 {ctx.author.mention} você tem {c} créditos")
+
+@bot.command()
 @commands.has_permissions(administrator=True)
-async def restock(ctx, *, texto: str):
-    parsed = parse_viper_blocks(texto)
-    if not parsed:
-        await ctx.send("Nada detectado")
+async def addcredits(ctx, member: discord.Member, amount: int):
+    """Adiciona créditos para um usuário (admin)."""
+    add_credits(member.id, amount)
+    await ctx.send(f"✅ Adicionados {amount} créditos para {member.mention}")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def buycredits(ctx, amount: int):
+    """Cria pedido de compra de créditos (admin)."""
+    oid, total = create_order(ctx.author.id, amount)
+    await ctx.send(
+        f"ORDER {oid}\nCredits: {amount}\nTotal: R${total}\n\nPIX: {PIX_KEY}\nTitular: {PIX_NAME}\nStatus: WAITING PAYMENT"
+    )
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def confirm(ctx, order_id: str):
+    """Confirma pedido de créditos e adiciona ao usuário."""
+    orders = load_json(ORDERS_FILE)
+    if order_id not in orders:
+        await ctx.send("❌ Pedido não encontrado")
         return
 
-    tier_counts = save_parsed_results(parsed)
+    order = orders[order_id]
+    if order["status"] == "paid":
+        await ctx.send("✅ Pedido já confirmado")
+        return
+
+    add_credits(order["user"], order["credits"])
+    order["status"] = "paid"
+    save_json(ORDERS_FILE, orders)
+
+    await ctx.send(f"✅ Pedido {order_id} confirmado")
+    user = await bot.fetch_user(order["user"])
+    try:
+        await user.send(f"💰 Créditos adicionados: {order['credits']}")
+    except:
+        pass
+
+@bot.command()
+async def historic(ctx):
+    """Mostra todos os pedidos já feitos, com status."""
+    orders = load_json(ORDERS_FILE)
+    if not orders:
+        await ctx.send("Nenhum pedido registrado")
+        return
+
+    msg = "**HISTÓRICO DE PEDIDOS**\n"
+    for oid, o in orders.items():
+        msg += f"ID: {oid} | User: <@{o['user']}> | Credits: {o['credits']} | Total: R${o['total']} | Status: {o['status']} | Time: {o['time']}\n"
+    await ctx.send(msg)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def restock(ctx, tipo: str, *, produtos: str):
+    """Adiciona stock de um único tipo e avisa no canal."""
+    tipo = tipo.lower()
+    if tipo not in STOCK_FILES:
+        await ctx.send("Tipo inválido")
+        return
+
+    lista = [l.strip() for l in produtos.split("\n") if l.strip()]
+    if not lista:
+        await ctx.send("Nenhum produto detectado")
+        return
+
+    with lock:
+        with open(STOCK_FILES[tipo], "a") as f:
+            f.write("\n".join(lista) + "\n")
 
     canal = bot.get_channel(RESTOCK_CHANNEL_ID)
     if canal:
         ping = f"<@&{RESTOCK_ROLE_ID}> " if RESTOCK_ROLE_ID else ""
-        for tier, count in tier_counts.items():
-            if count > 0:
-                await canal.send(f"{ping}RESTOCK {tier.upper()} {count}")
+        await canal.send(f"{ping}RESTOCK {tipo.upper()} | {len(lista)}")
 
-    await ctx.send(f"Restockado {sum(tier_counts.values())}")
+    await ctx.send(f"✅ Restock {tipo.upper()} | {len(lista)}")
+
+@bot.command()
+async def stock(ctx, tipo: str = None):
+    """Mostra quantidade de contas em stock."""
+    if tipo:
+        tipo = tipo.lower()
+        if tipo not in STOCK_FILES:
+            await ctx.send("Tipo inválido")
+            return
+        file = STOCK_FILES[tipo]
+        if not os.path.exists(file):
+            await ctx.send(f"{tipo.upper()}: 0")
+            return
+        with open(file) as f:
+            linhas = [l for l in f if l.strip()]
+        await ctx.send(f"{tipo.upper()}: {len(linhas)}")
+        return
+
+    # Se não especificou tipo, mostra todos
+    msg = "STOCK:\n"
+    for t, file in STOCK_FILES.items():
+        if not os.path.exists(file):
+            qtd = 0
+        else:
+            with open(file) as f:
+                qtd = len([l for l in f if l.strip()])
+        msg += f"{t.upper()}: {qtd}\n"
+    await ctx.send(msg)
 
 bot.run(TOKEN)
