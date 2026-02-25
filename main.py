@@ -4,7 +4,7 @@ import json
 import threading
 import os
 import time
-import random
+import re
 from datetime import datetime
 
 TOKEN = os.getenv("TOKEN")
@@ -15,8 +15,6 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 lock = threading.Lock()
-
-# ================= CONFIG =================
 
 PRICES = {"low": 3, "medium": 10, "high": 14}
 PRICE_PER_CREDIT = 0.35
@@ -29,15 +27,11 @@ STOCK_FILES = {
 
 CREDITS_FILE = "credits.json"
 GEN_LOG_FILE = "gen_log.txt"
-ORDERS_FILE = "orders.json"
 HITRATE_FILE = "hitrate.json"
 
 RESTOCK_CHANNEL_ID = 1474702726389567588
 RESTOCK_ROLE_ID = 1475311889293774939
 GEN_LOG_CHANNEL_ID = 1475984317581627402
-
-PIX_KEY = "vhxzstore@gmail.com"
-PIX_NAME = "VHXZ STORE"
 
 GEN_COOLDOWN = 8
 user_cooldowns = {}
@@ -47,11 +41,11 @@ user_cooldowns = {}
 def load_json(path):
     if not os.path.exists(path):
         return {}
-    with open(path, "r") as f:
-        try:
+    try:
+        with open(path, "r") as f:
             return json.load(f)
-        except:
-            return {}
+    except:
+        return {}
 
 def save_json(path, data):
     with open(path, "w") as f:
@@ -60,9 +54,10 @@ def save_json(path, data):
 # ================= HITRATE =================
 
 def load_hitrate():
-    if not os.path.exists(HITRATE_FILE):
+    data = load_json(HITRATE_FILE)
+    if not data:
         return {"total": 0, "robux": 0, "limited": 0, "rap_total": 0}
-    return load_json(HITRATE_FILE)
+    return data
 
 def save_hitrate(data):
     save_json(HITRATE_FILE, data)
@@ -86,7 +81,7 @@ def gerar_produto(tipo):
 # ================= PARSER RESTOCK =================
 
 def parse_viper_blocks(text):
-    blocks = text.split("VIPER GEN RESULT")
+    blocks = re.split(r"VIPER GEN RESULT", text, flags=re.I)
     results = []
 
     for b in blocks:
@@ -95,46 +90,46 @@ def parse_viper_blocks(text):
             continue
 
         tier = None
-        if "Tier:" in b:
-            tier = b.split("Tier:")[1].split("\n")[0].strip().lower()
+        m = re.search(r"Tier:\s*(LOW|MEDIUM|HIGH)", b, re.I)
+        if m:
+            tier = m.group(1).lower()
 
         user = None
-        if "User:" in b:
-            user = b.split("User:")[1].split("\n")[0].strip()
+        m = re.search(r"User:\s*(.+)", b)
+        if m:
+            user = m.group(1).strip()
 
         pwd = None
-        if "Pass:" in b:
-            pwd = b.split("Pass:")[1].split("\n")[0].strip()
+        m = re.search(r"Pass:\s*(.+)", b)
+        if m:
+            pwd = m.group(1).strip()
 
-        if "Robux:" in b:
-            val = b.split("Robux:")[1].split("\n")[0]
-            val = int("".join([c for c in val if c.isdigit()]))
-
+        robux_match = re.search(r"Robux:\s*([\d,\.]+)", b, re.I)
+        if robux_match:
+            val = int(re.sub(r"\D", "", robux_match.group(1)))
             results.append(("robux", tier, val, user, pwd))
+            continue
 
-        elif "Limited:" in b:
-            item = b.split("Limited:")[1].split("\n")[0].strip()
-
+        limited_match = re.search(r"Limited:\s*(.+)", b, re.I)
+        if limited_match:
+            item = limited_match.group(1).strip()
             rap = 0
-            if "Value:" in b:
-                line = b.split("Value:")[1].split("\n")[0]
-                nums = "".join([c for c in line if c.isdigit()])
-                if nums:
-                    rap = int(nums)
-
+            rap_match = re.search(r"Value:\s*([\d,\.]+)", b, re.I)
+            if rap_match:
+                rap = int(re.sub(r"\D", "", rap_match.group(1)))
             results.append(("limited", tier, item, rap, user, pwd))
 
     return results
 
 def save_parsed_results(results):
     hit = load_hitrate()
+    tier_counts = {"low":0,"medium":0,"high":0}
 
     for r in results:
         if r[0] == "robux":
             _, tier, val, user, pwd = r
             line = f"ROBux:{val}|{user}|{pwd}"
             hit["robux"] += 1
-
         else:
             _, tier, item, rap, user, pwd = r
             line = f"LIMITED:{item}|{rap}|{user}|{pwd}"
@@ -145,16 +140,19 @@ def save_parsed_results(results):
             with lock:
                 with open(STOCK_FILES[tier], "a") as f:
                     f.write(line + "\n")
+            tier_counts[tier] += 1
 
         hit["total"] += 1
 
     save_hitrate(hit)
+    return tier_counts
 
 # ================= CREDITS =================
 
 def add_credits(user_id, amount):
     data = load_json(CREDITS_FILE)
-    data[str(user_id)] = data.get(str(user_id), 0) + amount
+    uid = str(user_id)
+    data[uid] = data.get(uid, 0) + amount
     save_json(CREDITS_FILE, data)
 
 def get_credits(user_id):
@@ -199,27 +197,21 @@ class GenView(discord.ui.View):
         remove_credits(user.id, price)
         user_cooldowns[user.id] = time.time()
 
-        # ===== PARSE PRODUTO =====
         if produto.startswith("ROBux:"):
-            parts = produto.split("|")
-            val = parts[0].split(":", 1)[1]
-            userp = parts[1]
-            passp = parts[2]
-
+            _, userp, passp = produto.split("|")
+            val = produto.split(":",1)[1].split("|")[0]
             texto = f"💰 Robux: {val}\n👤 User: {userp}\n🔑 Pass: {passp}"
 
         elif produto.startswith("LIMITED:"):
             parts = produto.split("|")
-            item = parts[0].split(":", 1)[1]
+            item = parts[0].split(":",1)[1]
             rap = parts[1]
             userp = parts[2]
             passp = parts[3]
-
             texto = f"🎩 Limited: {item}\n💎 RAP: {rap}\n👤 User: {userp}\n🔑 Pass: {passp}"
         else:
             texto = produto
 
-        # ===== LOG =====
         with lock:
             with open(GEN_LOG_FILE, "a") as f:
                 f.write(f"{datetime.utcnow()}|{user.id}|{tipo}|{produto}\n")
@@ -250,75 +242,28 @@ class GenView(discord.ui.View):
 
 @bot.command()
 async def painel(ctx):
-    embed = discord.Embed(
-        title="VIPER GEN",
-        description="Escolha o tier",
-        color=0xff003c
-    )
-
+    embed = discord.Embed(title="VIPER GEN", description="Escolha o tier", color=0xff003c)
     for t in PRICES:
         embed.add_field(name=t.upper(), value=f"{PRICES[t]} credits", inline=False)
-
     await ctx.send(embed=embed, view=GenView())
-
-@bot.command()
-async def stats(ctx):
-    gens = 0
-    users = set()
-    credits_spent = 0
-
-    if os.path.exists(GEN_LOG_FILE):
-        with open(GEN_LOG_FILE) as f:
-            for line in f:
-                parts = line.strip().split("|")
-                if len(parts) < 4:
-                    continue
-                _, user_id, tier, produto = parts
-                gens += 1
-                users.add(user_id)
-                if tier in PRICES:
-                    credits_spent += PRICES[tier]
-
-    lucro = round(credits_spent * PRICE_PER_CREDIT, 2)
-
-    embed = discord.Embed(title="VIPER STATS", color=0x00ffcc)
-    embed.add_field(name="Users", value=len(users))
-    embed.add_field(name="Generations", value=gens)
-    embed.add_field(name="Credits Spent", value=credits_spent)
-    embed.add_field(name="Revenue R$", value=lucro)
-
-    await ctx.send(embed=embed)
-
-@bot.command()
-async def hitrate(ctx):
-    hit = load_hitrate()
-    if hit["total"] == 0:
-        await ctx.send("Sem dados")
-        return
-
-    robux_pct = round(hit["robux"] / hit["total"] * 100, 1)
-    limited_pct = round(hit["limited"] / hit["total"] * 100, 1)
-
-    await ctx.send(
-        f"HITRATE\nTotal: {hit['total']}\nRobux: {robux_pct}%\nLimited: {limited_pct}%\nRAP: {hit['rap_total']}"
-    )
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def restock(ctx, *, texto: str):
     parsed = parse_viper_blocks(texto)
-
     if not parsed:
         await ctx.send("Nada detectado")
         return
 
-    save_parsed_results(parsed)
+    tier_counts = save_parsed_results(parsed)
 
     canal = bot.get_channel(RESTOCK_CHANNEL_ID)
     if canal:
         ping = f"<@&{RESTOCK_ROLE_ID}> " if RESTOCK_ROLE_ID else ""
-        await canal.send(f"{ping}RESTOCK: {len(parsed)}")
+        for tier, count in tier_counts.items():
+            if count > 0:
+                await canal.send(f"{ping}RESTOCK {tier.upper()} {count}")
 
-    await ctx.send(f"Restockado {len(parsed)}")
+    await ctx.send(f"Restockado {sum(tier_counts.values())}")
 
 bot.run(TOKEN)
