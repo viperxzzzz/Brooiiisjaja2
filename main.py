@@ -285,6 +285,43 @@ async def stock(ctx, tipo: str = None):
                 qtd = len([l for l in f if l.strip()])
         msg += f"{t.upper()}: {qtd}\n"
     await ctx.send(msg)
+@bot.command()
+async def stats(ctx):
+    gens = 0
+    users = set()
+    tier_count = {"low": 0, "medium": 0, "high": 0}
+    credits_spent = 0
+
+    if os.path.exists(GEN_LOG_FILE):
+        with open(GEN_LOG_FILE, "r") as f:
+            for line in f:
+                parts = line.strip().split("|")
+                if len(parts) < 5:
+                    continue
+                _, user_id, tier, hit, key = [p.strip() for p in parts]
+                gens += 1
+                users.add(user_id)
+                if tier in tier_count:
+                    tier_count[tier] += 1
+                    credits_spent += PRICES[tier]
+
+    total_users = len(users)
+    lucro = round(credits_spent * PRICE_PER_CREDIT, 2)
+
+    top_tier = max(tier_count, key=tier_count.get).upper() if gens > 0 else "N/A"
+
+    embed = discord.Embed(
+        title="⛧ VIPER ANALYTICS ⛧",
+        color=0x00ffe1
+    )
+
+    embed.add_field(name="Users", value=str(total_users))
+    embed.add_field(name="Generations", value=str(gens))
+    embed.add_field(name="Credits Spent", value=str(credits_spent))
+    embed.add_field(name="Revenue (R$)", value=str(lucro))
+    embed.add_field(name="Top Tier", value=top_tier)
+
+    await ctx.send(embed=embed)
 
 # ================= RUN =================
 
