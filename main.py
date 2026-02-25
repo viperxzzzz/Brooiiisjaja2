@@ -48,6 +48,7 @@ PIX_NAME = "VHXZ STORE"
 GEN_COOLDOWN = 8
 user_cooldowns = {}
 
+HITRATE_FILE = "hitrate.json"
 # ================= UTILS =================
 
 def load_json(path):
