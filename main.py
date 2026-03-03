@@ -210,7 +210,7 @@ class MainPanel(discord.ui.View):
 async def painel(ctx):
     embed = discord.Embed(
         title="🦂 VIPER GEN",
-        description="Sistema automático premium\n\nEscolha uma opção abaixo.",
+        description="The real best guaranteed quality Roblox account generator \n\n With Viper, you can usually hit **Robux, valuable games items, RAP, ageds** and much more.\n\n Escolha uma opção abaixo.",
         color=0xff003c
     )
 
