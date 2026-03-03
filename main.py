@@ -179,11 +179,20 @@ class MainPanel(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
+        # botão Top-Up manual
+        self.add_item(
+            discord.ui.Button(
+                label="Top-Up",
+                style=discord.ButtonStyle.link,
+                url=f"https://discord.com/channels/{GUILD_ID}/{TOPUP_CHANNEL_ID}"
+            )
+        )
+
     @discord.ui.button(label="Generate", style=discord.ButtonStyle.success)
     async def generate(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
             "🎯 Escolha o tier:",
-            view=GenView(),  # USA SUA VIEW ANTIGA AQUI
+            view=GenView(),
             ephemeral=True
         )
 
@@ -195,13 +204,6 @@ class MainPanel(discord.ui.View):
             ephemeral=True
         )
 
-    @discord.ui.button(
-        label="Top-Up",
-        style=discord.ButtonStyle.link,
-        url=f"https://discord.com/channels/{GUILD_ID}/{TOPUP_CHANNEL_ID}"
-    )
-    async def topup(self, interaction: discord.Interaction, button: discord.ui.Button):
-        pass
 
 # ================= COMANDOS =================
 @bot.command()
