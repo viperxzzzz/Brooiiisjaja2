@@ -18,6 +18,8 @@ lock = threading.Lock()  # para evitar conflito de escrita em arquivos
 
 # ===== Preços, créditos e arquivos =====
 PRICES = {"low": 3, "medium": 10, "high": 14}  # preço em créditos por tier
+GUILD_ID = 1463315641871106131
+TOPUP_CHANNEL_ID = 1471541921292878058
 PRICE_PER_CREDIT = 0.35  # R$ por crédito
 
 STOCK_FILES = {
@@ -94,6 +96,13 @@ def gerar_produto(tipo):
             f.write("\n".join(linhas))
         return produto
 
+def stock_count(tipo):
+    file = STOCK_FILES[tipo]
+    if not os.path.exists(file):
+        return 0
+    with open(file, "r") as f:
+        return len([l for l in f if l.strip()])
+
 # ================= ORDERS =================
 def create_order(user_id, credits):
     """Cria um pedido de créditos para pagamento."""
@@ -166,14 +175,64 @@ class GenView(discord.ui.View):
     async def high(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process(interaction, "high")
 
+class MainPanel(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Generate", style=discord.ButtonStyle.success)
+    async def generate(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "🎯 Escolha o tier:",
+            view=GenView(),  # USA SUA VIEW ANTIGA AQUI
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="Your Credits", style=discord.ButtonStyle.primary)
+    async def credits_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        credits = get_credits(interaction.user.id)
+        await interaction.response.send_message(
+            f"💳 Seus créditos atuais: **{credits}**",
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="Top-Up",
+        style=discord.ButtonStyle.link,
+        url=f"https://discord.com/channels/{GUILD_ID}/{TOPUP_CHANNEL_ID}"
+    )
+    async def topup(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass
+
 # ================= COMANDOS =================
 @bot.command()
 async def painel(ctx):
-    """Abre o painel com os botões de geração."""
-    embed = discord.Embed(title="VIPER GEN", description="Escolha o tier", color=0xff003c)
-    for t in PRICES:
-        embed.add_field(name=t.upper(), value=f"{PRICES[t]} credits", inline=False)
-    await ctx.send(embed=embed, view=GenView())
+    embed = discord.Embed(
+        title="🦂 VIPER GEN",
+        description="Sistema automático premium\n\nEscolha uma opção abaixo.",
+        color=0xff003c
+    )
+
+    embed.add_field(
+        name="LOW",
+        value=f"{PRICES['low']} credits | Stock: {stock_count('low')}",
+        inline=False
+    )
+
+    embed.add_field(
+        name="MEDIUM",
+        value=f"{PRICES['medium']} credits | Stock: {stock_count('medium')}",
+        inline=False
+    )
+
+    embed.add_field(
+        name="HIGH",
+        value=f"{PRICES['high']} credits | Stock: {stock_count('high')}",
+        inline=False
+    )
+
+    embed.set_footer(text="VHXZ • Instant Delivery")
+
+    await ctx.send(embed=embed, view=MainPanel())
 
 @bot.command()
 async def credits(ctx):
