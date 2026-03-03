@@ -35,6 +35,8 @@ GEN_LOG_FILE = "gen_log.txt"
 RESTOCK_CHANNEL_ID = 1474702726389567588
 RESTOCK_ROLE_ID = 1475311889293774939
 GEN_LOG_CHANNEL_ID = 1475984317581627402
+PANEL_MESSAGE_ID = 1478301494431322173
+PANEL_CHANNEL_ID = 1471646039604723805
 
 GEN_COOLDOWN = 8  # segundos entre gerações para o mesmo usuário
 user_cooldowns = {}
@@ -147,6 +149,7 @@ class GenView(discord.ui.View):
 
         remove_credits(user.id, price)
         user_cooldowns[user.id] = time.time()
+        await atualizar_painel()
 
         # LOG DE GERAÇÃO
         with lock:
@@ -204,13 +207,10 @@ class MainPanel(discord.ui.View):
             ephemeral=True
         )
 
-
-# ================= COMANDOS =================
-@bot.command()
-async def painel(ctx):
+def criar_embed():
     embed = discord.Embed(
         title="🦂 VIPER GEN",
-        description="The real best guaranteed quality Roblox account generator \n\n With Viper, you can usually hit **Robux, valuable games items, RAP, ageds** and much more.\n\n Escolha uma opção abaixo.",
+        description="Sistema automático premium\n\nEscolha uma opção abaixo.",
         color=0xff003c
     )
 
@@ -233,8 +233,32 @@ async def painel(ctx):
     )
 
     embed.set_footer(text="VHXZ • Instant Delivery")
+    return embed
 
-    await ctx.send(embed=embed, view=MainPanel())
+async def atualizar_painel():
+    global PANEL_MESSAGE_ID, PANEL_CHANNEL_ID
+
+    if not PANEL_MESSAGE_ID or not PANEL_CHANNEL_ID:
+        return
+
+    channel = bot.get_channel(PANEL_CHANNEL_ID)
+    if not channel:
+        return
+
+    try:
+        msg = await channel.fetch_message(PANEL_MESSAGE_ID)
+        await msg.edit(embed=criar_embed(), view=MainPanel())
+    except:
+        pass
+# ================= COMANDOS =================
+@bot.command()
+async def painel(ctx):
+    global PANEL_MESSAGE_ID, PANEL_CHANNEL_ID
+
+    msg = await ctx.send(embed=criar_embed(), view=MainPanel())
+
+    PANEL_MESSAGE_ID = msg.id
+    PANEL_CHANNEL_ID = ctx.channel.id
 
 @bot.command()
 async def credits(ctx):
@@ -318,7 +342,8 @@ async def restock(ctx, tipo: str, *, produtos: str):
     if canal:
         ping = f"<@&{RESTOCK_ROLE_ID}> " if RESTOCK_ROLE_ID else ""
         await canal.send(f"{ping}RESTOCK {tipo.upper()} | {len(lista)}")
-
+        
+    await atualizar_painel()
     await ctx.send(f"✅ Restock {tipo.upper()} | {len(lista)}")
 
 @bot.command()
