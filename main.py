@@ -147,12 +147,12 @@ class GenDropdown(discord.ui.Select):
                 continue
 
             options.append(
-    discord.SelectOption(
-        label=f"{cat.upper()} — {PRICES.get(cat,0)} credits",
-        description=f"Stock: {qtd}",
-        value=cat
-    )
-)
+                discord.SelectOption(
+                    label=f"{cat.upper()} — {PRICES.get(cat,0)} credits",
+                    description=f"Stock: {qtd}",
+                    value=cat
+                )
+            )
 
         # caso todas categorias estejam sem stock
         if not options:
