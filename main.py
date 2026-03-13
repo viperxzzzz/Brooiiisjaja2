@@ -102,6 +102,10 @@ def stock_count(tipo):
     with open(file, "r") as f:
         return len([l for l in f if l.strip()])
 
+def get_categories():
+    files = os.listdir(STOCK_FOLDER)
+    return [f.replace(".txt","") for f in files if f.endswith(".txt")]
+
 # ================= ORDERS =================
 def create_order(user_id, credits):
     """Cria um pedido de créditos para pagamento."""
