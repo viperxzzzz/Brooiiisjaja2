@@ -180,17 +180,27 @@ class GenDropdown(discord.ui.Select):
 
         produto = gerar_produto(categoria)
 
-        if not produto:
-            await interaction.response.send_message(
-                "⚠️ Sem stock",
-                ephemeral=True
-            )
-            return
+if not produto:
+    await interaction.response.send_message(
+        "⚠️ Sem stock",
+        ephemeral=True
+    )
+    return
 
-        remove_credits(user.id, price)
-        user_cooldowns[user.id] = time.time()
+# alerta se acabou o stock
+if stock_count(categoria) == 0:
+    canal = bot.get_channel(RESTOCK_CHANNEL_ID)
 
-        await atualizar_painel()
+    if canal:
+        await canal.send(
+            f"⚠️ **STOCK ESGOTADO**\n"
+            f"Categoria: **{categoria.upper()}**"
+        )
+
+remove_credits(user.id, price)
+user_cooldowns[user.id] = time.time()
+
+await atualizar_painel()
 
         # log
         with lock:
