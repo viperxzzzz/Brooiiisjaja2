@@ -97,19 +97,13 @@ def gerar_produto(tipo):
         linhas.remove(produto)
 
         if stock_count(tipo) == 0:
-
     canal = bot.get_channel(RESTOCK_CHANNEL_ID)
 
     if canal:
         await canal.send(
-            f"⚠️ **STOCK ESGOTADO**\n"
-            f"Categoria: **{tipo.upper()}**"
+            f"⚠️ STOCK ESGOTADO\n"
+            f"Categoria: {tipo.upper()}"
         )
-
-        with open(file,"w") as f:
-            f.write("\n".join(linhas))
-
-        return produto
 
 def stock_count(tipo):
     file = f"{STOCK_FOLDER}/{tipo}.txt"
