@@ -414,5 +414,8 @@ async def stock(ctx, tipo: str = None):
 async def on_ready():
     bot.add_view(MainPanel())
     bot.add_view(GenView())
+
+    await atualizar_painel()
+
     print(f"Bot online: {bot.user}")
 bot.run(TOKEN)
