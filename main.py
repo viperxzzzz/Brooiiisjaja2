@@ -217,31 +217,27 @@ class MainPanel(discord.ui.View):
         )
 
 def criar_embed():
+
     embed = discord.Embed(
         title="🦂 VIPER GEN",
-        description="The real best guaranteed quality Roblox account generator\n\nWork with quality accounts and profit today\n\nWith Viper, you can usually hit **Robux, valuable games items, RAP, old join date** and much more.\n\nEscolha uma opção abaixo.",
+        description="Instant delivery generator\n\nChoose a category below.",
         color=0xff003c
     )
 
-    embed.add_field(
-        name="LOW",
-        value=f"{PRICES['low']} credits | Stock: {stock_count('low')}",
-        inline=False
-    )
+    categorias = get_categories()
 
-    embed.add_field(
-        name="MEDIUM",
-        value=f"{PRICES['medium']} credits | Stock: {stock_count('medium')}",
-        inline=False
-    )
+    if not categorias:
+        embed.description += "\n\n⚠️ No stock available."
 
-    embed.add_field(
-        name="HIGH",
-        value=f"{PRICES['high']} credits | Stock: {stock_count('high')}",
-        inline=False
-    )
+    for cat in categorias:
+        embed.add_field(
+            name=cat.upper(),
+            value=f"Stock: {stock_count(cat)}",
+            inline=False
+        )
 
     embed.set_footer(text="VHXZ • Instant Delivery")
+
     return embed
 
 async def atualizar_painel():
@@ -331,29 +327,20 @@ async def historic(ctx):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def restock(ctx, tipo: str, *, produtos: str):
-    """Adiciona stock de um único tipo e avisa no canal."""
-    tipo = tipo.lower()
-    if tipo not in STOCK_FILES:
-        await ctx.send("Tipo inválido")
-        return
+async def restock(ctx, categoria: str, *, produtos: str):
+
+    file = f"{STOCK_FOLDER}/{categoria}.txt"
 
     lista = [l.strip() for l in produtos.split("\n") if l.strip()]
+
     if not lista:
         await ctx.send("Nenhum produto detectado")
         return
 
-    with lock:
-        with open(STOCK_FILES[tipo], "a") as f:
-            f.write("\n".join(lista) + "\n")
+    with open(file,"a") as f:
+        f.write("\n".join(lista)+"\n")
 
-    canal = bot.get_channel(RESTOCK_CHANNEL_ID)
-    if canal:
-        ping = f"<@&{RESTOCK_ROLE_ID}> " if RESTOCK_ROLE_ID else ""
-        await canal.send(f"{ping}RESTOCK {tipo.upper()} | {len(lista)}")
-        
-    await atualizar_painel()
-    await ctx.send(f"✅ Restock {tipo.upper()} | {len(lista)}")
+    await ctx.send(f"✅ Restock {categoria.upper()} | {len(lista)} contas")
 
 @bot.command()
 async def stock(ctx, tipo: str = None):
