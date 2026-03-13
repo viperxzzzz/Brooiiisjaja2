@@ -80,21 +80,26 @@ def remove_credits(user_id, amount):
     return True
 
 # ================= FUNÇÕES DE STOCK =================
-produto = gerar_produto(tipo)
+def gerar_produto(tipo):
+    file = f"{STOCK_FOLDER}/{tipo}.txt"
 
-if not produto:
-    await interaction.response.send_message("⚠️ Sem stock", ephemeral=True)
-    return
+    with lock:
+        if not os.path.exists(file):
+            return None
 
-# verifica se acabou
-if stock_count(tipo) == 0:
-    canal = bot.get_channel(RESTOCK_CHANNEL_ID)
+        with open(file) as f:
+            linhas = [l.strip() for l in f if l.strip()]
 
-    if canal:
-        await canal.send(
-            f"⚠️ **STOCK ESGOTADO**\n"
-            f"Categoria: **{tipo.upper()}**"
-        )
+        if not linhas:
+            return None
+
+        produto = random.choice(linhas)
+        linhas.remove(produto)
+
+        with open(file, "w") as f:
+            f.write("\n".join(linhas) + "\n")
+
+        return produto
 
 def stock_count(tipo):
     file = f"{STOCK_FOLDER}/{tipo}.txt"
