@@ -412,10 +412,16 @@ async def stock(ctx, tipo: str = None):
 
 @bot.event
 async def on_ready():
+
+    await bot.wait_until_ready()
+
     bot.add_view(MainPanel())
     bot.add_view(GenView())
 
-    await atualizar_painel()
+    try:
+        await atualizar_painel()
+    except:
+        pass
 
     print(f"Bot online: {bot.user}")
 bot.run(TOKEN)
