@@ -202,6 +202,7 @@ user_cooldowns[user.id] = time.time()
 
 await atualizar_painel()
 
+
         # log
         with lock:
             with open(GEN_LOG_FILE, "a") as f:
