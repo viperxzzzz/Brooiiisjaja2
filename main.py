@@ -139,11 +139,28 @@ class GenDropdown(discord.ui.Select):
         options = []
 
         for cat in categorias:
+
+            qtd = stock_count(cat)
+
+            # não mostrar categorias sem stock
+            if qtd == 0:
+                continue
+
             options.append(
                 discord.SelectOption(
                     label=cat.upper(),
-                    description=f"Stock: {stock_count(cat)}",
+                    description=f"Stock: {qtd}",
                     value=cat
+                )
+            )
+
+        # caso todas categorias estejam sem stock
+        if not options:
+            options.append(
+                discord.SelectOption(
+                    label="SEM STOCK",
+                    description="Nenhuma categoria disponível",
+                    value="none"
                 )
             )
 
@@ -155,6 +172,13 @@ class GenDropdown(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
+
+        if self.values[0] == "none":
+            await interaction.response.send_message(
+                "⚠️ Nenhuma categoria disponível",
+                ephemeral=True
+            )
+            return
 
         categoria = self.values[0]
         user = interaction.user
