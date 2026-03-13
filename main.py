@@ -362,35 +362,37 @@ async def historic(ctx):
         msg += f"ID: {oid} | User: <@{o['user']}> | Credits: {o['credits']} | Total: R${o['total']} | Status: {o['status']} | Time: {o['time']}\n"
     await ctx.send(msg)
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def restock(ctx, categoria: str, *, produtos: str):
+from discord import app_commands
+
+@bot.tree.command(name="restock", description="Adicionar stock")
+@app_commands.describe(
+    categoria="Nome da categoria",
+    preco="Preço do produto",
+    contas="Lista de contas (uma por linha)"
+)
+async def restock(interaction: discord.Interaction, categoria: str, preco: int, contas: str):
 
     file = f"{STOCK_FOLDER}/{categoria}.txt"
 
-    lista = [l.strip() for l in produtos.split("\n") if l.strip()]
+    lista = [l.strip() for l in contas.split("\n") if l.strip()]
 
     if not lista:
-        await ctx.send("Nenhum produto detectado")
+        await interaction.response.send_message("❌ Nenhuma conta detectada", ephemeral=True)
         return
 
     with open(file, "a") as f:
         f.write("\n".join(lista) + "\n")
 
+    PRICES[categoria] = preco
+
     qtd = len(lista)
 
-    await ctx.send(f"✅ Restock {categoria.upper()} | {qtd}")
-
-    # alerta no canal
-    canal = bot.get_channel(RESTOCK_CHANNEL_ID)
-
-    if canal:
-        await canal.send(
-            f"📦 **RESTOCK**\n"
-            f"Categoria: **{categoria.upper()}**\n"
-            f"Adicionado: **{qtd}** contas\n"
-            f"Stock atual: **{stock_count(categoria)}**"
-        )
+    await interaction.response.send_message(
+        f"✅ Restock feito\n"
+        f"Categoria: **{categoria}**\n"
+        f"Preço: **{preco} créditos**\n"
+        f"Adicionado: **{qtd} contas**"
+    )
 
     await atualizar_painel()
 
@@ -425,15 +427,10 @@ async def stock(ctx, tipo: str = None):
 @bot.event
 async def on_ready():
 
-    await bot.wait_until_ready()
+    await bot.tree.sync()
 
     bot.add_view(MainPanel())
     bot.add_view(GenView())
-
-    try:
-        await atualizar_painel()
-    except:
-        pass
 
     print(f"Bot online: {bot.user}")
 bot.run(TOKEN)
