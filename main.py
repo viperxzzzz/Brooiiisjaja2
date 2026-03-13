@@ -409,4 +409,9 @@ async def stock(ctx, tipo: str = None):
         msg += f"{t.upper()}: {qtd}\n"
     await ctx.send(msg)
 
+@bot.event
+async def on_ready():
+    bot.add_view(MainPanel())
+    bot.add_view(GenView())
+    print(f"Bot online: {bot.user}")
 bot.run(TOKEN)
