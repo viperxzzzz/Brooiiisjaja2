@@ -81,25 +81,33 @@ def remove_credits(user_id, amount):
 
 # ================= FUNÇÕES DE STOCK =================
 def gerar_produto(tipo):
-    """Pega a primeira conta do stock e remove do arquivo."""
-    file = STOCK_FILES[tipo]
+    file = f"{STOCK_FOLDER}/{tipo}.txt"
+
     with lock:
         if not os.path.exists(file):
             return None
-        with open(file, "r") as f:
+
+        with open(file) as f:
             linhas = [l.strip() for l in f if l.strip()]
+
         if not linhas:
             return None
-        produto = linhas.pop(0)
-        with open(file, "w") as f:
+
+        produto = random.choice(linhas)
+        linhas.remove(produto)
+
+        with open(file,"w") as f:
             f.write("\n".join(linhas))
+
         return produto
 
 def stock_count(tipo):
-    file = STOCK_FILES[tipo]
+    file = f"{STOCK_FOLDER}/{tipo}.txt"
+
     if not os.path.exists(file):
         return 0
-    with open(file, "r") as f:
+
+    with open(file) as f:
         return len([l for l in f if l.strip()])
 
 def get_categories():
