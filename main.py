@@ -132,60 +132,36 @@ def create_order(user_id, credits):
 
 # ================= GEN VIEW =================
 class GenView(discord.ui.View):
-    """View do Discord com botões para gerar LOW, MEDIUM e HIGH."""
 
     def __init__(self):
         super().__init__(timeout=None)
 
-    async def process(self, interaction, tipo):
-        user = interaction.user
-        price = PRICES[tipo]
+        for categoria in get_categories():
 
-        now = time.time()
-        last = user_cooldowns.get(user.id, 0)
-        if now - last < GEN_COOLDOWN:
-            await interaction.response.send_message(f"⏳ Cooldown {int(GEN_COOLDOWN - (now - last))}s", ephemeral=True)
-            return
+            self.add_item(
+                discord.ui.Button(
+                    label=categoria.upper(),
+                    style=discord.ButtonStyle.primary,
+                    custom_id=f"gen_{categoria}"
+                )
+            )
 
-        if get_credits(user.id) < price:
-            await interaction.response.send_message("❌ Sem créditos suficientes", ephemeral=True)
-            return
+    async def interaction_check(self, interaction):
 
-        produto = gerar_produto(tipo)
-        if not produto:
-            await interaction.response.send_message("⚠️ Sem stock", ephemeral=True)
-            return
+        if interaction.data["custom_id"].startswith("gen_"):
 
-        remove_credits(user.id, price)
-        user_cooldowns[user.id] = time.time()
-        await atualizar_painel()
+            categoria = interaction.data["custom_id"].replace("gen_","")
 
-        # LOG DE GERAÇÃO
-        with lock:
-            with open(GEN_LOG_FILE, "a") as f:
-                f.write(f"{datetime.utcnow()}|{user.id}|{tipo}|{produto}\n")
+            produto = gerar_produto(categoria)
 
-        canal = bot.get_channel(GEN_LOG_CHANNEL_ID)
-        if canal:
-            await canal.send(f"GEN\nUser: <@{user.id}>\nTier: {tipo.upper()}\n{produto}")
+            if not produto:
+                await interaction.response.send_message("⚠️ Sem stock", ephemeral=True)
+                return False
 
-        try:
-            await user.send(f"VIPER GEN\nTier: {tipo.upper()}\n{produto}")
+            await interaction.user.send(f"GEN {categoria.upper()}\n{produto}")
             await interaction.response.send_message("✔ Entregue", ephemeral=True)
-        except:
-            await interaction.response.send_message("❌ DM fechada", ephemeral=True)
 
-    @discord.ui.button(label="LOW", style=discord.ButtonStyle.danger)
-    async def low(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.process(interaction, "low")
-
-    @discord.ui.button(label="MEDIUM", style=discord.ButtonStyle.primary)
-    async def medium(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.process(interaction, "medium")
-
-    @discord.ui.button(label="HIGH", style=discord.ButtonStyle.success)
-    async def high(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.process(interaction, "high")
+        return True
 
 class MainPanel(discord.ui.View):
     def __init__(self):
