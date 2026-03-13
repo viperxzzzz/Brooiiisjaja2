@@ -131,37 +131,100 @@ def create_order(user_id, credits):
     return oid, total
 
 # ================= GEN VIEW =================
+class GenDropdown(discord.ui.Select):
+
+    def __init__(self):
+
+        categorias = get_categories()
+
+        options = []
+
+        for cat in categorias:
+            options.append(
+                discord.SelectOption(
+                    label=cat.upper(),
+                    description=f"Stock: {stock_count(cat)}",
+                    value=cat
+                )
+            )
+
+        super().__init__(
+            placeholder="🎯 Select a category",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+
+        categoria = self.values[0]
+        user = interaction.user
+        price = PRICES.get(categoria, 5)
+
+        now = time.time()
+        last = user_cooldowns.get(user.id, 0)
+
+        if now - last < GEN_COOLDOWN:
+            await interaction.response.send_message(
+                f"⏳ Cooldown {int(GEN_COOLDOWN - (now - last))}s",
+                ephemeral=True
+            )
+            return
+
+        if get_credits(user.id) < price:
+            await interaction.response.send_message(
+                "❌ Sem créditos suficientes",
+                ephemeral=True
+            )
+            return
+
+        produto = gerar_produto(categoria)
+
+        if not produto:
+            await interaction.response.send_message(
+                "⚠️ Sem stock",
+                ephemeral=True
+            )
+            return
+
+        remove_credits(user.id, price)
+        user_cooldowns[user.id] = time.time()
+
+        await atualizar_painel()
+
+        # log
+        with lock:
+            with open(GEN_LOG_FILE, "a") as f:
+                f.write(f"{datetime.utcnow()}|{user.id}|{categoria}|{produto}\n")
+
+        canal = bot.get_channel(GEN_LOG_CHANNEL_ID)
+
+        if canal:
+            await canal.send(
+                f"GEN\nUser: <@{user.id}>\nCategoria: {categoria.upper()}\n{produto}"
+            )
+
+        try:
+            await user.send(
+                f"VIPER GEN\nCategoria: {categoria.upper()}\n{produto}"
+            )
+
+            await interaction.response.send_message(
+                "✔ Entregue",
+                ephemeral=True
+            )
+
+        except:
+            await interaction.response.send_message(
+                "❌ DM fechada",
+                ephemeral=True)
+
 class GenView(discord.ui.View):
 
     def __init__(self):
         super().__init__(timeout=None)
 
-        for categoria in get_categories():
-
-            self.add_item(
-                discord.ui.Button(
-                    label=categoria.upper(),
-                    style=discord.ButtonStyle.primary,
-                    custom_id=f"gen_{categoria}"
-                )
-            )
-
-    async def interaction_check(self, interaction):
-
-        if interaction.data["custom_id"].startswith("gen_"):
-
-            categoria = interaction.data["custom_id"].replace("gen_","")
-
-            produto = gerar_produto(categoria)
-
-            if not produto:
-                await interaction.response.send_message("⚠️ Sem stock", ephemeral=True)
-                return False
-
-            await interaction.user.send(f"GEN {categoria.upper()}\n{produto}")
-            await interaction.response.send_message("✔ Entregue", ephemeral=True)
-
-        return True
+        self.add_item(GenDropdown())
 
 class MainPanel(discord.ui.View):
     def __init__(self):
