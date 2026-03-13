@@ -380,6 +380,7 @@ async def restock(ctx, categoria: str, *, produtos: str):
         f.write("\n".join(lista)+"\n")
 
     await ctx.send(f"✅ Restock {categoria.upper()} | {len(lista)} contas")
+await atualizar_painel()
 
 @bot.command()
 async def stock(ctx, tipo: str = None):
