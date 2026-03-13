@@ -136,7 +136,6 @@ class GenDropdown(discord.ui.Select):
     def __init__(self):
 
         categorias = get_categories()
-
         options = []
 
         for cat in categorias:
@@ -178,7 +177,7 @@ class GenDropdown(discord.ui.Select):
             )
             return
 
-produto = gerar_produto(categoria)
+        produto = gerar_produto(categoria)
 
         if not produto:
             await interaction.response.send_message(
@@ -202,12 +201,12 @@ produto = gerar_produto(categoria)
 
         await atualizar_painel()
 
-
-        # log
+        # log arquivo
         with lock:
             with open(GEN_LOG_FILE, "a") as f:
                 f.write(f"{datetime.utcnow()}|{user.id}|{categoria}|{produto}\n")
 
+        # log canal
         canal = bot.get_channel(GEN_LOG_CHANNEL_ID)
 
         if canal:
@@ -228,7 +227,8 @@ produto = gerar_produto(categoria)
         except:
             await interaction.response.send_message(
                 "❌ DM fechada",
-                ephemeral=True)
+                ephemeral=True
+            )
 
 class GenView(discord.ui.View):
 
