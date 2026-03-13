@@ -372,6 +372,7 @@ from discord import app_commands
 )
 async def restock(interaction: discord.Interaction, categoria: str, preco: int, contas: str):
 
+    categoria = categoria.lower()
     file = f"{STOCK_FOLDER}/{categoria}.txt"
 
     lista = [l.strip() for l in contas.split("\n") if l.strip()]
@@ -389,10 +390,20 @@ async def restock(interaction: discord.Interaction, categoria: str, preco: int, 
 
     await interaction.response.send_message(
         f"✅ Restock feito\n"
-        f"Categoria: **{categoria}**\n"
-        f"Preço: **{preco} créditos**\n"
+        f"Categoria: **{categoria.upper()}**\n"
         f"Adicionado: **{qtd} contas**"
     )
+
+    # aviso no canal de restock
+    canal = bot.get_channel(RESTOCK_CHANNEL_ID)
+
+    if canal:
+        await canal.send(
+            f"📦 **RESTOCK**\n"
+            f"Categoria: **{categoria.upper()}**\n"
+            f"Adicionado: **{qtd} contas**\n"
+            f"Stock atual: **{stock_count(categoria)}**"
+        )
 
     await atualizar_painel()
 
