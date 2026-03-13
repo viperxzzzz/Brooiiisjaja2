@@ -22,11 +22,8 @@ GUILD_ID = 1463315641871106131
 TOPUP_CHANNEL_ID = 1471541921292878058
 PRICE_PER_CREDIT = 0.35  # R$ por crédito
 
-STOCK_FILES = {
-    "low": "stock_low.txt",
-    "medium": "stock_medium.txt",
-    "high": "stock_high.txt"
-}
+STOCK_FOLDER = "stocks"
+os.makedirs(STOCK_FOLDER, exist_ok=True)
 
 CREDITS_FILE = "credits.json"
 ORDERS_FILE = "orders.json"
