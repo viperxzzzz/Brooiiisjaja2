@@ -403,20 +403,27 @@ from discord import app_commands
 @app_commands.describe(
     categoria="Nome da categoria",
     preco="Preço do produto",
-    contas="Lista de contas (uma por linha)"
+    arquivo="Arquivo .txt com as contas"
 )
-async def restock(interaction: discord.Interaction, categoria: str, preco: int, contas: str):
+async def restock(interaction: discord.Interaction, categoria: str, preco: int, arquivo: discord.Attachment):
 
     categoria = categoria.lower()
-    file = f"{STOCK_FOLDER}/{categoria}.txt"
+    file_path = f"{STOCK_FOLDER}/{categoria}.txt"
 
-    lista = [l.strip() for l in contas.split("\n") if l.strip()]
+    # baixar arquivo enviado
+    content = await arquivo.read()
+    texto = content.decode("utf-8")
+
+    lista = [l.strip() for l in texto.split("\n") if l.strip()]
 
     if not lista:
-        await interaction.response.send_message("❌ Nenhuma conta detectada", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ Nenhuma conta encontrada no arquivo",
+            ephemeral=True
+        )
         return
 
-    with open(file, "a") as f:
+    with open(file_path, "a") as f:
         f.write("\n".join(lista) + "\n")
 
     PRICES[categoria] = preco
