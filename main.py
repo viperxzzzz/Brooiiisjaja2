@@ -467,7 +467,9 @@ async def stock(ctx, tipo: str = None):
 @bot.event
 async def on_ready():
 
-    await bot.tree.sync()
+    guild = discord.Object(id=GUILD_ID)
+
+    await bot.tree.sync(guild=guild)
 
     bot.add_view(MainPanel())
     bot.add_view(GenView())
