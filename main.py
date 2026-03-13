@@ -259,21 +259,19 @@ def criar_embed():
 
     embed = discord.Embed(
         title="🦂 VIPER GEN",
-        description="Instant delivery generator\n\nChoose a category below.",
+        description=(
+            "The real best guaranteed quality Roblox account generator\n\n"
+            "Work with quality accounts and profit today\n\n"
+            "With Viper, you can usually hit **Robux, valuable games items, RAP, old join date** and much more."
+        ),
         color=0xff003c
     )
 
-    categorias = get_categories()
-
-    if not categorias:
-        embed.description += "\n\n⚠️ No stock available."
-
-    for cat in categorias:
-        embed.add_field(
-            name=cat.upper(),
-            value=f"Stock: {stock_count(cat)}",
-            inline=False
-        )
+    embed.add_field(
+        name="🎯 Generate Accounts",
+        value="Click **Generate** to open the category selector.",
+        inline=False
+    )
 
     embed.set_footer(text="VHXZ • Instant Delivery")
 
