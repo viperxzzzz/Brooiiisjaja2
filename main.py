@@ -351,7 +351,7 @@ async def addcredits(ctx, member: discord.Member, amount: int):
     await ctx.send(f"✅ Adicionados {amount} créditos para {member.mention}")
 
 @bot.command()
-@commands.has_permissions(administrator=True)
+@commands.has_permissions(administrator=False)
 async def buycredits(ctx, amount: int):
     """Cria pedido de compra de créditos (admin)."""
     oid, total = create_order(ctx.author.id, amount)
