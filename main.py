@@ -376,11 +376,25 @@ async def restock(ctx, categoria: str, *, produtos: str):
         await ctx.send("Nenhum produto detectado")
         return
 
-    with open(file,"a") as f:
-        f.write("\n".join(lista)+"\n")
+    with open(file, "a") as f:
+        f.write("\n".join(lista) + "\n")
 
-    await ctx.send(f"✅ Restock {categoria.upper()} | {len(lista)} contas")
-await atualizar_painel()
+    qtd = len(lista)
+
+    await ctx.send(f"✅ Restock {categoria.upper()} | {qtd}")
+
+    # alerta no canal
+    canal = bot.get_channel(RESTOCK_CHANNEL_ID)
+
+    if canal:
+        await canal.send(
+            f"📦 **RESTOCK**\n"
+            f"Categoria: **{categoria.upper()}**\n"
+            f"Adicionado: **{qtd}** contas\n"
+            f"Stock atual: **{stock_count(categoria)}**"
+        )
+
+    await atualizar_painel()
 
 @bot.command()
 async def stock(ctx, tipo: str = None):
