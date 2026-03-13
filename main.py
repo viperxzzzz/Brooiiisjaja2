@@ -420,30 +420,17 @@ async def restock(interaction: discord.Interaction, categoria: str, preco: int, 
 
 @bot.command()
 async def stock(ctx, tipo: str = None):
-    """Mostra quantidade de contas em stock."""
+
     if tipo:
         tipo = tipo.lower()
-        if tipo not in STOCK_FILES:
-            await ctx.send("Tipo inválido")
-            return
-        file = STOCK_FILES[tipo]
-        if not os.path.exists(file):
-            await ctx.send(f"{tipo.upper()}: 0")
-            return
-        with open(file) as f:
-            linhas = [l for l in f if l.strip()]
-        await ctx.send(f"{tipo.upper()}: {len(linhas)}")
+        await ctx.send(f"{tipo.upper()}: {stock_count(tipo)}")
         return
 
-    # Se não especificou tipo, mostra todos
     msg = "STOCK:\n"
-    for t, file in STOCK_FILES.items():
-        if not os.path.exists(file):
-            qtd = 0
-        else:
-            with open(file) as f:
-                qtd = len([l for l in f if l.strip()])
-        msg += f"{t.upper()}: {qtd}\n"
+
+    for cat in get_categories():
+        msg += f"{cat.upper()}: {stock_count(cat)}\n"
+
     await ctx.send(msg)
 
 @bot.event
