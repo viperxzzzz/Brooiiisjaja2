@@ -203,7 +203,7 @@ class GenDropdown(discord.ui.Select):
 
         produto = gerar_produto(categoria)
 
-        if not produto:
+if not produto:
     await interaction.response.send_message(
         "⚠️ Sem stock",
         ephemeral=True
