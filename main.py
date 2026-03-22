@@ -194,12 +194,12 @@ class GenDropdown(discord.ui.Select):
             )
             return
 
-        if get_credits(user.id) < price:
-            await interaction.response.send_message(
-                "❌ Sem créditos suficientes",
-                ephemeral=True
-            )
-            return
+        if price > 0 and get_credits(user.id) < price:
+    await interaction.response.send_message(
+        "❌ Sem créditos suficientes",
+        ephemeral=True
+    )
+    return
 
         produto = gerar_produto(categoria)
 
