@@ -220,7 +220,9 @@ class GenDropdown(discord.ui.Select):
                     f"Categoria: **{categoria.upper()}**"
                 )
 
-        remove_credits(user.id, price)
+        if price > 0:
+            remove_credits(user.id, price)
+
         user_cooldowns[user.id] = time.time()
 
         await atualizar_painel()
