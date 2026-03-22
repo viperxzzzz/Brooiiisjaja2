@@ -211,7 +211,7 @@ if not produto:
     return
 
         # alerta se acabou o stock
-        if stock_count(categoria) == 0:
+if stock_count(categoria) == 0:
     canal = bot.get_channel(RESTOCK_CHANNEL_ID)
 
     if canal:
