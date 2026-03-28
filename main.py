@@ -211,15 +211,16 @@ class GenDropdown(discord.ui.Select):
             return
 
         # alerta se acabou o stock
-if stock_count(categoria) == 0:
-    canal = bot.get_channel(RESTOCK_CHANNEL_ID)
+        if stock_count(categoria) == 0:
+            canal = bot.get_channel(RESTOCK_CHANNEL_ID)
 
-    if canal:
-        await canal.send(
-            f"⚠️ **STOCK ESGOTADO**\n"
-            f"Categoria: **{categoria.upper()}**"
-        )
+            if canal:
+                await canal.send(
+                    f"⚠️ **STOCK ESGOTADO**\n"
+                    f"Categoria: **{categoria.upper()}**"
+                )
 
+        # remove créditos (se não for free)
         if price > 0:
             remove_credits(user.id, price)
 
