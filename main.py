@@ -1,4 +1,4 @@
-import discord
+7import discord
 from discord.ext import commands
 import json
 import threading
