@@ -17,6 +17,29 @@ BASE_DIR = Path(__file__).resolve().parent
 TOKEN = os.getenv("TOKEN")
 ENABLE_MEMBER_INTENT = os.getenv("ENABLE_MEMBER_INTENT", "false").lower() in {"1", "true", "yes", "on"}
 
+
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.lower() in {"1", "true", "yes", "on"}
+
+
+def env_id_set(name: str) -> set[int]:
+    values = set()
+    for item in os.getenv(name, "").split(","):
+        item = item.strip()
+        if item.isdigit():
+            values.add(int(item))
+    return values
+
 GUILD_ID = 1463315641871106131
 TOPUP_CHANNEL_ID = 1471541921292878058
 RESTOCK_CHANNEL_ID = 1474702726389567588
@@ -30,8 +53,19 @@ PIX_KEY = "vhxzstore@gmail.com"
 PIX_NAME = "VHXZ STORE"
 GEN_COOLDOWN_SECONDS = 30
 BOOST_CREDITS_PER_BOOST = 40
+ACTIVITY_CREDITS_ENABLED = env_bool("ACTIVITY_CREDITS_ENABLED", True)
+ACTIVITY_CREDIT_AMOUNT = env_int("ACTIVITY_CREDIT_AMOUNT", 1)
+ACTIVITY_COOLDOWN_SECONDS = env_int("ACTIVITY_COOLDOWN_SECONDS", 300)
+ACTIVITY_DAILY_CAP = env_int("ACTIVITY_DAILY_CAP", 20)
+ACTIVITY_IGNORED_CHANNEL_IDS = env_id_set("ACTIVITY_IGNORED_CHANNEL_IDS")
 
 DEFAULT_PRICES = {"low": 3, "medium": 10, "high": 14}
+BRAND_COLOR = 0xE11D48
+ACTIVITY_COLOR = 0x10B981
+BOOST_COLOR = 0xA855F7
+INFO_COLOR = 0x2563EB
+RESTOCK_COLOR = 0x22C55E
+WARNING_COLOR = 0xF59E0B
 
 STOCK_DIR = BASE_DIR / "stocks"
 CREDITS_FILE = BASE_DIR / "credits.json"
@@ -41,6 +75,7 @@ BOOST_CLAIMS_FILE = BASE_DIR / "boost_claims.json"
 SETTINGS_FILE = BASE_DIR / "settings.json"
 GEN_LOG_FILE = BASE_DIR / "gen_log.txt"
 AUDIT_LOG_FILE = BASE_DIR / "audit_log.jsonl"
+ACTIVITY_FILE = BASE_DIR / "activity.json"
 
 STOCK_DIR.mkdir(exist_ok=True)
 
@@ -55,6 +90,10 @@ bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents, help
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def utc_day() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
 
 
 def load_json(path: Path, default):
@@ -281,45 +320,281 @@ def mark_boost_claimed(user_id: int, source: str, amount: int) -> None:
     save_json(BOOST_CLAIMS_FILE, claims)
 
 
-def product_embed(title: str, description: str, color: int = 0xFF003C) -> discord.Embed:
+def activity_default_user(day: str) -> dict:
+    return {
+        "day": day,
+        "messages_today": 0,
+        "earned_today": 0,
+        "total_messages": 0,
+        "total_earned": 0,
+        "last_award": 0.0,
+    }
+
+
+def get_activity_user(data: dict, user_id: int) -> dict:
+    day = utc_day()
+    users = data.setdefault("users", {})
+    record = users.setdefault(str(user_id), activity_default_user(day))
+    if record.get("day") != day:
+        record["day"] = day
+        record["messages_today"] = 0
+        record["earned_today"] = 0
+    return record
+
+
+def record_activity_message(user_id: int) -> tuple[bool, int, dict]:
+    data = load_json(ACTIVITY_FILE, {"users": {}})
+    record = get_activity_user(data, user_id)
+    now = time.time()
+
+    record["messages_today"] = int(record.get("messages_today", 0)) + 1
+    record["total_messages"] = int(record.get("total_messages", 0)) + 1
+
+    can_award = (
+        ACTIVITY_CREDITS_ENABLED
+        and ACTIVITY_CREDIT_AMOUNT > 0
+        and int(record.get("earned_today", 0)) < ACTIVITY_DAILY_CAP
+        and now - float(record.get("last_award", 0)) >= ACTIVITY_COOLDOWN_SECONDS
+    )
+
+    awarded = 0
+    if can_award:
+        awarded = min(ACTIVITY_CREDIT_AMOUNT, ACTIVITY_DAILY_CAP - int(record.get("earned_today", 0)))
+        record["earned_today"] = int(record.get("earned_today", 0)) + awarded
+        record["total_earned"] = int(record.get("total_earned", 0)) + awarded
+        record["last_award"] = now
+
+    save_json(ACTIVITY_FILE, data)
+    return awarded > 0, awarded, record
+
+
+def get_activity_record(user_id: int) -> dict:
+    data = load_json(ACTIVITY_FILE, {"users": {}})
+    record = get_activity_user(data, user_id)
+    save_json(ACTIVITY_FILE, data)
+    return record
+
+
+def activity_leaderboard(period: str) -> list[tuple[int, dict]]:
+    data = load_json(ACTIVITY_FILE, {"users": {}})
+    day = utc_day()
+    users = []
+    for raw_user_id, record in data.get("users", {}).items():
+        if not raw_user_id.isdigit():
+            continue
+        if period == "today" and record.get("day") != day:
+            score = 0
+        else:
+            score = int(record.get("earned_today" if period == "today" else "total_earned", 0))
+        if score > 0:
+            users.append((int(raw_user_id), record))
+
+    key = "earned_today" if period == "today" else "total_earned"
+    return sorted(users, key=lambda item: int(item[1].get(key, 0)), reverse=True)[:10]
+
+
+def product_embed(title: str, description: str, color: int = BRAND_COLOR) -> discord.Embed:
     return discord.Embed(title=title, description=description, color=color, timestamp=datetime.now(timezone.utc))
+
+
+def format_duration(seconds: int) -> str:
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, remaining_seconds = divmod(seconds, 60)
+    if remaining_seconds == 0:
+        return f"{minutes}m"
+    return f"{minutes}m {remaining_seconds}s"
+
+
+def stock_status(count: int) -> str:
+    if count >= 25:
+        return "Healthy"
+    if count >= 10:
+        return "Available"
+    if count >= 1:
+        return "Low stock"
+    return "Out"
 
 
 def stock_lines(*, include_empty: bool = True) -> list[str]:
     prices = load_prices()
-    return [
-        f"**{category.upper()}**: {stock_count(category)} in stock - {prices.get(category, 5)} credits"
-        for category in get_categories(include_empty=include_empty)
-    ]
+    lines = []
+    for category in get_categories(include_empty=include_empty):
+        count = stock_count(category)
+        lines.append(
+            f"**{category.upper()}** - {count} available - {prices.get(category, 5)} credits - {stock_status(count)}"
+        )
+    return lines
 
 
 def panel_embed() -> discord.Embed:
     embed = discord.Embed(
         title="VIPER GEN",
         description=(
-            "Private account delivery with credit-based generation.\n"
-            "Use the buttons below or slash commands to generate, check stock, and manage credits."
+            "**Premium account generation with instant private delivery.**\n"
+            "Earn credits through activity, buy balance when needed, and claim booster rewards."
         ),
-        color=0xFF003C,
+        color=BRAND_COLOR,
+        timestamp=datetime.now(timezone.utc),
     )
-    embed.add_field(name="Stock", value="\n".join(stock_lines(include_empty=False))[:1024] or "No categories in stock right now.", inline=False)
-    embed.add_field(name="Boost Perk", value=f"Boost the server and claim **{BOOST_CREDITS_PER_BOOST} credits**.", inline=False)
-    embed.set_footer(text="VHXZ - Instant Delivery")
+    embed.add_field(
+        name="Available Stock",
+        value="\n".join(stock_lines(include_empty=False))[:1024] or "No categories in stock right now.",
+        inline=False,
+    )
+    embed.add_field(name="Earn", value=f"Activity cap: **{ACTIVITY_DAILY_CAP} credits/day**", inline=True)
+    embed.add_field(name="Boost", value=f"Reward: **{BOOST_CREDITS_PER_BOOST} credits**", inline=True)
+    embed.add_field(name="Generate", value=f"Cooldown: **{format_duration(GEN_COOLDOWN_SECONDS)}**", inline=True)
+    embed.add_field(
+        name="Quick Start",
+        value="Use **Generate Account** to choose stock, **Balance** to check credits, or **Guide** for the full store explanation.",
+        inline=False,
+    )
+    embed.set_footer(text="VHXZ Store | Instant delivery | Private results")
+    return embed
+
+
+def activity_embed(user: discord.abc.User) -> discord.Embed:
+    record = get_activity_record(user.id)
+    remaining = max(ACTIVITY_DAILY_CAP - int(record.get("earned_today", 0)), 0)
+    last_award = float(record.get("last_award", 0))
+    ready_in = max(int(ACTIVITY_COOLDOWN_SECONDS - (time.time() - last_award)), 0)
+    status = "Ready to earn" if ready_in == 0 and remaining > 0 else f"Next credit window in {ready_in}s"
+    if remaining <= 0:
+        status = "Daily cap reached"
+
+    embed = discord.Embed(
+        title="Activity Credits",
+        description="Earn credits by keeping the server active with normal conversation.",
+        color=ACTIVITY_COLOR,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.add_field(name="Progress Today", value=f"**{record.get('earned_today', 0)} / {ACTIVITY_DAILY_CAP}** credits", inline=True)
+    embed.add_field(name="Remaining", value=f"**{remaining}** credits", inline=True)
+    embed.add_field(name="Window", value=status, inline=True)
+    embed.add_field(name="Messages Today", value=str(record.get("messages_today", 0)), inline=True)
+    embed.add_field(name="Total Earned", value=f"{record.get('total_earned', 0)} credits", inline=True)
+    embed.add_field(name="Total Messages", value=str(record.get("total_messages", 0)), inline=True)
+    embed.set_footer(text=f"+{ACTIVITY_CREDIT_AMOUNT} credit per {format_duration(ACTIVITY_COOLDOWN_SECONDS)} earning window.")
+    return embed
+
+
+def activity_panel_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="Activity Credits Program",
+        description="A credit reward system for real conversation and steady server activity.",
+        color=ACTIVITY_COLOR,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.add_field(
+        name="How It Works",
+        value=(
+            "Send a normal message when your earning window is ready.\n"
+            f"Reward: **{ACTIVITY_CREDIT_AMOUNT} credit** per **{format_duration(ACTIVITY_COOLDOWN_SECONDS)}** window."
+        ),
+        inline=False,
+    )
+    embed.add_field(name="Daily Limit", value=f"**{ACTIVITY_DAILY_CAP} credits/day**", inline=True)
+    embed.add_field(name="Spam Protection", value="Messages during cooldown do not stack rewards.", inline=True)
+    embed.add_field(name="Commands", value="`/activity` - progress\n`/activityleaderboard` - rankings\n`/profile` - full account overview", inline=False)
+    embed.set_footer(text="Activity credits reward consistency, not spam.")
+    return embed
+
+
+def store_help_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="VIPER GEN Guide",
+        description="A complete guide to credits, generation, orders, restocks, activity rewards, and boost perks.",
+        color=BRAND_COLOR,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.add_field(
+        name="1. Credits",
+        value=(
+            "Credits are the balance used to generate accounts.\n"
+            "Check your balance with `/credits` or `/profile`."
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="2. How To Get Credits",
+        value=(
+            "Buy credits with `/buycredits` and wait for staff confirmation.\n"
+            f"Earn activity credits by chatting: **{ACTIVITY_CREDIT_AMOUNT} credit per {format_duration(ACTIVITY_COOLDOWN_SECONDS)}**, capped at **{ACTIVITY_DAILY_CAP}/day**.\n"
+            f"Boosters can claim **{BOOST_CREDITS_PER_BOOST} credits** with `/claimboost`."
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="3. Generation",
+        value=(
+            "Use `/generate` or the panel button, choose an available category, and the bot delivers privately.\n"
+            f"Generation cooldown is **{format_duration(GEN_COOLDOWN_SECONDS)}**."
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="4. Restocks",
+        value="When new stock is added, the restock ping role is notified. Empty categories are hidden from the main panel.",
+        inline=False,
+    )
+    embed.add_field(
+        name="5. Orders",
+        value="Use `/myorders`, `/orderinfo`, and `/cancelorder` to track or cancel waiting credit orders.",
+        inline=False,
+    )
+    embed.set_footer(text="Use the buttons below for quick access.")
+    return embed
+
+
+def profile_embed(user: discord.abc.User) -> discord.Embed:
+    activity_record = get_activity_record(user.id)
+    orders_data = load_json(ORDERS_FILE, {})
+    user_orders = [order for order in orders_data.values() if int(order.get("user", 0)) == user.id]
+    waiting_orders = sum(1 for order in user_orders if order.get("status") == "waiting")
+    paid_orders = sum(1 for order in user_orders if order.get("status") == "paid")
+    boost_status = "Claimed" if has_claimed_boost(user.id) else "Not claimed"
+    remaining_activity = max(ACTIVITY_DAILY_CAP - int(activity_record.get("earned_today", 0)), 0)
+
+    embed = discord.Embed(
+        title=f"{getattr(user, 'display_name', user.name)} | VIPER Profile",
+        color=INFO_COLOR,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.description = "Your credit balance, order status, activity progress, and booster reward state."
+    embed.add_field(name="Balance", value=f"**{get_credits(user.id)}** credits", inline=True)
+    embed.add_field(name="Boost Reward", value=boost_status, inline=True)
+    embed.add_field(name="Orders", value=f"Paid: **{paid_orders}**\nWaiting: **{waiting_orders}**", inline=True)
+    embed.add_field(
+        name="Activity Today",
+        value=(
+            f"Earned: **{activity_record.get('earned_today', 0)} / {ACTIVITY_DAILY_CAP}** credits\n"
+            f"Remaining: **{remaining_activity}** credits"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Activity Total",
+        value=f"{activity_record.get('total_earned', 0)} credits earned\n{activity_record.get('total_messages', 0)} messages tracked",
+        inline=False,
+    )
+    embed.set_thumbnail(url=user.display_avatar.url)
     return embed
 
 
 def boost_perks_embed() -> discord.Embed:
     embed = discord.Embed(
-        title="VIPER GEN Boost Perks",
+        title="Boost Perks",
         description=(
-            f"Server boosters receive **{BOOST_CREDITS_PER_BOOST} credits** as a boost reward.\n"
-            "Use the button below after boosting to claim your credits."
+            "Boost the server and claim a credit reward directly into your generator balance."
         ),
-        color=0xF47FFF,
+        color=BOOST_COLOR,
+        timestamp=datetime.now(timezone.utc),
     )
-    embed.add_field(name="Reward", value=f"{BOOST_CREDITS_PER_BOOST} credits per approved boost reward.", inline=True)
-    embed.add_field(name="Delivery", value="Credits are added directly to your bot balance.", inline=True)
-    embed.set_footer(text="Admins can use /grantboost for manual multi-boost credit grants.")
+    embed.add_field(name="Reward", value=f"**{BOOST_CREDITS_PER_BOOST} credits**", inline=True)
+    embed.add_field(name="Claim", value="Use the button below or `/claimboost`.", inline=True)
+    embed.add_field(name="Manual Grants", value="Staff can use `/grantboost` for extra approved rewards.", inline=False)
+    embed.set_footer(text="Boost reward credits are added instantly after claim approval.")
     return embed
 
 
@@ -329,9 +604,9 @@ async def send_restock_alert(category: str, message: str, *, ping_role: bool = F
         try:
             content = f"<@&{RESTOCK_ROLE_ID}>\n{message}" if ping_role else message
             embed = discord.Embed(
-                title="Restock" if ping_role else "Stock Update",
+                title="New Restock" if ping_role else "Stock Update",
                 description=message,
-                color=0x2ECC71 if ping_role else 0xF1C40F,
+                color=RESTOCK_COLOR if ping_role else WARNING_COLOR,
                 timestamp=datetime.now(timezone.utc),
             )
             embed.add_field(name="Category", value=category.upper(), inline=True)
@@ -511,10 +786,45 @@ class BoostPanel(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Claim Boost Credits", style=discord.ButtonStyle.primary, custom_id="viper:claim_boost")
+    @discord.ui.button(label="Claim Reward", style=discord.ButtonStyle.primary, custom_id="viper:claim_boost")
     async def claim_boost(self, interaction: discord.Interaction, button: discord.ui.Button):
         del button
         await claim_boost_reward(interaction)
+
+
+class ActivityPanel(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="My Activity", style=discord.ButtonStyle.primary, custom_id="viper:activity_me")
+    async def my_activity(self, interaction: discord.Interaction, button: discord.ui.Button):
+        del button
+        await interaction.response.send_message(embed=activity_embed(interaction.user), ephemeral=True)
+
+    @discord.ui.button(label="Profile", style=discord.ButtonStyle.secondary, custom_id="viper:activity_profile")
+    async def my_profile(self, interaction: discord.Interaction, button: discord.ui.Button):
+        del button
+        await interaction.response.send_message(embed=profile_embed(interaction.user), ephemeral=True)
+
+
+class HelpPanel(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Profile", style=discord.ButtonStyle.primary, custom_id="viper:help_profile")
+    async def profile(self, interaction: discord.Interaction, button: discord.ui.Button):
+        del button
+        await interaction.response.send_message(embed=profile_embed(interaction.user), ephemeral=True)
+
+    @discord.ui.button(label="Activity", style=discord.ButtonStyle.success, custom_id="viper:help_activity")
+    async def activity(self, interaction: discord.Interaction, button: discord.ui.Button):
+        del button
+        await interaction.response.send_message(embed=activity_embed(interaction.user), ephemeral=True)
+
+    @discord.ui.button(label="Boost Rewards", style=discord.ButtonStyle.secondary, custom_id="viper:help_boost")
+    async def boost(self, interaction: discord.Interaction, button: discord.ui.Button):
+        del button
+        await interaction.response.send_message(embed=boost_perks_embed(), view=BoostPanel(), ephemeral=True)
 
 
 class MainPanel(discord.ui.View):
@@ -525,23 +835,34 @@ class MainPanel(discord.ui.View):
                 label="Top-Up",
                 style=discord.ButtonStyle.link,
                 url=f"https://discord.com/channels/{GUILD_ID}/{TOPUP_CHANNEL_ID}",
+                row=1,
             )
         )
 
-    @discord.ui.button(label="Generate", style=discord.ButtonStyle.success, custom_id="viper:generate")
+    @discord.ui.button(label="Generate Account", style=discord.ButtonStyle.success, custom_id="viper:generate", row=0)
     async def generate(self, interaction: discord.Interaction, button: discord.ui.Button):
         del button
         await interaction.response.send_message("Choose a category:", view=GenView(), ephemeral=True)
 
-    @discord.ui.button(label="Your Credits", style=discord.ButtonStyle.primary, custom_id="viper:credits")
+    @discord.ui.button(label="Balance", style=discord.ButtonStyle.primary, custom_id="viper:credits", row=0)
     async def credits_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         del button
         await interaction.response.send_message(f"Your current balance is **{get_credits(interaction.user.id)}** credits.", ephemeral=True)
 
-    @discord.ui.button(label="Boost Perks", style=discord.ButtonStyle.secondary, custom_id="viper:boost_perks")
+    @discord.ui.button(label="Boost", style=discord.ButtonStyle.secondary, custom_id="viper:boost_perks", row=0)
     async def boost_perks(self, interaction: discord.Interaction, button: discord.ui.Button):
         del button
         await interaction.response.send_message(embed=boost_perks_embed(), view=BoostPanel(), ephemeral=True)
+
+    @discord.ui.button(label="Activity", style=discord.ButtonStyle.secondary, custom_id="viper:activity", row=0)
+    async def activity(self, interaction: discord.Interaction, button: discord.ui.Button):
+        del button
+        await interaction.response.send_message(embed=activity_embed(interaction.user), ephemeral=True)
+
+    @discord.ui.button(label="Guide", style=discord.ButtonStyle.secondary, custom_id="viper:help", row=0)
+    async def help(self, interaction: discord.Interaction, button: discord.ui.Button):
+        del button
+        await interaction.response.send_message(embed=store_help_embed(), view=HelpPanel(), ephemeral=True)
 
 
 @bot.tree.command(name="panel", description="Post the generator panel in this channel.")
@@ -565,14 +886,82 @@ async def boostpanel(interaction: discord.Interaction):
     write_audit("boost_panel_posted", actor_id=interaction.user.id, details={"channel_id": interaction.channel_id})
 
 
+@bot.tree.command(name="activitypanel", description="Post the activity credits panel in this channel.")
+@app_commands.default_permissions(administrator=True)
+async def activitypanel(interaction: discord.Interaction):
+    await interaction.response.send_message(embed=activity_panel_embed(), view=ActivityPanel())
+    write_audit("activity_panel_posted", actor_id=interaction.user.id, details={"channel_id": interaction.channel_id})
+
+
+@bot.tree.command(name="helppanel", description="Post the store help panel in this channel.")
+@app_commands.default_permissions(administrator=True)
+async def helppanel(interaction: discord.Interaction):
+    await interaction.response.send_message(embed=store_help_embed(), view=HelpPanel())
+    write_audit("help_panel_posted", actor_id=interaction.user.id, details={"channel_id": interaction.channel_id})
+
+
 @bot.tree.command(name="credits", description="Check your credit balance.")
 async def credits(interaction: discord.Interaction):
     await interaction.response.send_message(f"You have **{get_credits(interaction.user.id)}** credits.", ephemeral=True)
 
 
+@bot.tree.command(name="profile", description="View your VIPER GEN profile.")
+async def profile(interaction: discord.Interaction):
+    await interaction.response.send_message(embed=profile_embed(interaction.user), ephemeral=True)
+
+
+@bot.tree.command(name="helpstore", description="Learn how credits, generation, restocks, boosts, and activity work.")
+async def helpstore(interaction: discord.Interaction):
+    await interaction.response.send_message(embed=store_help_embed(), view=HelpPanel(), ephemeral=True)
+
+
 @bot.tree.command(name="claimboost", description="Claim your server boost credit reward.")
 async def claimboost(interaction: discord.Interaction):
     await claim_boost_reward(interaction)
+
+
+@bot.tree.command(name="activity", description="Check your activity credit progress.")
+async def activity(interaction: discord.Interaction):
+    await interaction.response.send_message(embed=activity_embed(interaction.user), ephemeral=True)
+
+
+@bot.tree.command(name="activityleaderboard", description="Show the activity credits leaderboard.")
+@app_commands.choices(
+    period=[
+        app_commands.Choice(name="Today", value="today"),
+        app_commands.Choice(name="All time", value="all"),
+    ]
+)
+async def activityleaderboard(interaction: discord.Interaction, period: app_commands.Choice[str]):
+    leaders = activity_leaderboard(period.value)
+    if not leaders:
+        await interaction.response.send_message("No activity credits have been earned yet.", ephemeral=True)
+        return
+
+    key = "earned_today" if period.value == "today" else "total_earned"
+    lines = []
+    for index, (user_id, record) in enumerate(leaders, start=1):
+        lines.append(f"**{index}.** <@{user_id}> - **{record.get(key, 0)}** credits")
+
+    embed = discord.Embed(
+        title=f"Activity Leaderboard | {period.name}",
+        description="\n".join(lines),
+        color=0x2ECC71,
+        timestamp=datetime.now(timezone.utc),
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="activitysettings", description="Show activity credit settings.")
+@app_commands.default_permissions(administrator=True)
+async def activitysettings(interaction: discord.Interaction):
+    embed = discord.Embed(title="Activity Credit Settings", color=0x2ECC71, timestamp=datetime.now(timezone.utc))
+    embed.add_field(name="Enabled", value=str(ACTIVITY_CREDITS_ENABLED), inline=True)
+    embed.add_field(name="Reward", value=f"{ACTIVITY_CREDIT_AMOUNT} credit(s)", inline=True)
+    embed.add_field(name="Cooldown", value=f"{ACTIVITY_COOLDOWN_SECONDS}s", inline=True)
+    embed.add_field(name="Daily Cap", value=f"{ACTIVITY_DAILY_CAP} credits", inline=True)
+    embed.add_field(name="Ignored Channels", value=str(len(ACTIVITY_IGNORED_CHANNEL_IDS)), inline=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="generate", description="Generate an account from a stock category.")
@@ -907,7 +1296,42 @@ async def stats(interaction: discord.Interaction):
     embed.add_field(name="Credits", value=f"{total_credits_in_circulation()} in circulation\n{len(credits_data)} users tracked", inline=True)
     embed.add_field(name="Orders", value=f"{waiting_orders} waiting\n{paid_orders} paid", inline=True)
     embed.add_field(name="Boosts", value=f"{len(load_json(BOOST_CLAIMS_FILE, {}))} claims tracked", inline=True)
+    activity_data = load_json(ACTIVITY_FILE, {"users": {}})
+    activity_users = activity_data.get("users", {})
+    earned_today = sum(
+        int(record.get("earned_today", 0))
+        for record in activity_users.values()
+        if record.get("day") == utc_day()
+    )
+    earned_total = sum(int(record.get("total_earned", 0)) for record in activity_users.values())
+    embed.add_field(name="Activity", value=f"{earned_today} earned today\n{earned_total} earned total", inline=True)
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot or message.guild is None:
+        return
+    if message.channel.id in ACTIVITY_IGNORED_CHANNEL_IDS:
+        return
+
+    awarded, amount, record = record_activity_message(message.author.id)
+    if not awarded:
+        return
+
+    balance = add_credits(message.author.id, amount)
+    write_audit(
+        "activity_credit",
+        actor_id=message.author.id,
+        target_id=message.author.id,
+        details={
+            "credits": amount,
+            "earned_today": record.get("earned_today", 0),
+            "daily_cap": ACTIVITY_DAILY_CAP,
+            "balance": balance,
+            "channel_id": message.channel.id,
+        },
+    )
 
 
 @bot.event
@@ -937,6 +1361,8 @@ async def on_ready():
     if not startup_synced:
         bot.add_view(MainPanel())
         bot.add_view(BoostPanel())
+        bot.add_view(ActivityPanel())
+        bot.add_view(HelpPanel())
         guild = discord.Object(id=GUILD_ID)
         bot.tree.copy_global_to(guild=guild)
         synced = await bot.tree.sync(guild=guild)
