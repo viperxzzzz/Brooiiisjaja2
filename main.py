@@ -66,6 +66,13 @@ BOOST_COLOR = 0xA855F7
 INFO_COLOR = 0x2563EB
 RESTOCK_COLOR = 0x22C55E
 WARNING_COLOR = 0xF59E0B
+ROBUX_GAMEPASSES = {
+    10: "https://www.roblox.com/game-pass/1821454204/10-credits",
+    50: "https://www.roblox.com/game-pass/1723994177/50-credits",
+    100: "https://www.roblox.com/game-pass/1724090181/100-credits",
+    250: "https://www.roblox.com/game-pass/1723826195/250-credits",
+    650: "https://www.roblox.com/game-pass/1724078106/500-credits",
+}
 
 STOCK_DIR = BASE_DIR / "stocks"
 CREDITS_FILE = BASE_DIR / "credits.json"
@@ -285,7 +292,7 @@ def total_credits_in_circulation() -> int:
     return sum(int(value) for value in data.values())
 
 
-def create_order(user_id: int, credits: int) -> tuple[str, float]:
+def create_order(user_id: int, credits: int, payment_method: str = "pix", metadata: Optional[dict] = None) -> tuple[str, float]:
     orders = load_json(ORDERS_FILE, {})
     while True:
         order_id = f"VX-{random.randint(1000, 9999)}"
@@ -298,10 +305,30 @@ def create_order(user_id: int, credits: int) -> tuple[str, float]:
         "credits": credits,
         "total": total,
         "status": "waiting",
+        "payment_method": payment_method,
+        "metadata": metadata or {},
         "time": utc_now(),
     }
     save_json(ORDERS_FILE, orders)
     return order_id, total
+
+
+def order_payment_label(order: dict) -> str:
+    method = order.get("payment_method", "pix")
+    if method == "robux":
+        return "Robux"
+    if method == "crypto":
+        return "Cryptocurrency"
+    return "Pix (BRL)"
+
+
+def order_total_label(order: dict) -> str:
+    method = order.get("payment_method", "pix")
+    if method == "robux":
+        return "Gamepass"
+    if method == "crypto":
+        return "Manual quote"
+    return f"R${float(order.get('total', 0)):.2f}"
 
 
 def has_claimed_boost(user_id: int) -> bool:
@@ -519,7 +546,7 @@ def store_help_embed() -> discord.Embed:
     embed.add_field(
         name="2. How To Get Credits",
         value=(
-            "Buy credits with `/buycredits` and wait for staff confirmation.\n"
+            "Buy credits with `/buycredits` using Pix, Robux, or cryptocurrency instructions.\n"
             f"Earn activity credits by chatting: **{ACTIVITY_CREDIT_AMOUNT} credit per {format_duration(ACTIVITY_COOLDOWN_SECONDS)}**, capped at **{ACTIVITY_DAILY_CAP}/day**.\n"
             f"Boosters can claim **{BOOST_CREDITS_PER_BOOST} credits** with `/claimboost`."
         ),
@@ -544,6 +571,37 @@ def store_help_embed() -> discord.Embed:
         inline=False,
     )
     embed.set_footer(text="Use the buttons below for quick access.")
+    return embed
+
+
+def buycredits_help_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="Buy Credits",
+        description="Choose a payment method in `/buycredits`.",
+        color=INFO_COLOR,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.add_field(
+        name="Pix (BRL)",
+        value="Select **Pix** and enter the quantity of credits you want. The bot creates a waiting payment order.",
+        inline=False,
+    )
+    embed.add_field(
+        name="Cryptocurrency",
+        value="Select **Cryptocurrency**. Then create a ticket and contact **Nyx** or **Hy** for payment instructions.",
+        inline=False,
+    )
+    embed.add_field(
+        name="Robux",
+        value="Select **Robux** and choose one of the fixed gamepass credit packages.",
+        inline=False,
+    )
+    embed.add_field(
+        name="Robux Packages",
+        value="\n".join(f"**{credits} credits** - {url}" for credits, url in ROBUX_GAMEPASSES.items()),
+        inline=False,
+    )
+    embed.set_footer(text="Credits are added after staff confirmation when needed.")
     return embed
 
 
@@ -971,20 +1029,103 @@ async def generate(interaction: discord.Interaction, category: str):
     await generate_for_user(interaction, category)
 
 
-@bot.tree.command(name="buycredits", description="Create a PIX credit purchase order.")
-@app_commands.describe(amount="How many credits you want to buy.")
-async def buycredits(interaction: discord.Interaction, amount: app_commands.Range[int, 1, 100000]):
-    order_id, total = create_order(interaction.user.id, int(amount))
-    write_audit("order_created", actor_id=interaction.user.id, details={"order_id": order_id, "credits": int(amount), "total": total})
-    await interaction.response.send_message(
-        f"Order `{order_id}` created.\n"
-        f"Credits: **{amount}**\n"
-        f"Total: **R${total:.2f}**\n\n"
-        f"PIX: `{PIX_KEY}`\n"
-        f"Titular: **{PIX_NAME}**\n"
-        "Status: **WAITING PAYMENT**",
-        ephemeral=True,
+@bot.tree.command(name="buycredits", description="Buy credits with Pix, cryptocurrency, or Robux.")
+@app_commands.describe(
+    method="Payment method.",
+    amount="Pix only: how many credits you want.",
+    robux_package="Robux only: fixed gamepass credit package.",
+)
+@app_commands.choices(
+    method=[
+        app_commands.Choice(name="Pix (BRL)", value="pix"),
+        app_commands.Choice(name="Cryptocurrency", value="crypto"),
+        app_commands.Choice(name="Robux", value="robux"),
+    ],
+    robux_package=[
+        app_commands.Choice(name="10 credits", value=10),
+        app_commands.Choice(name="50 credits", value=50),
+        app_commands.Choice(name="100 credits", value=100),
+        app_commands.Choice(name="250 credits", value=250),
+        app_commands.Choice(name="650 credits", value=650),
+    ],
+)
+async def buycredits(
+    interaction: discord.Interaction,
+    method: app_commands.Choice[str],
+    amount: Optional[int] = None,
+    robux_package: Optional[app_commands.Choice[int]] = None,
+):
+    if method.value == "pix":
+        if amount is None:
+            await interaction.response.send_message("For Pix, use `/buycredits method:Pix amount:<credits>`.", ephemeral=True)
+            return
+        if amount < 1 or amount > 100000:
+            await interaction.response.send_message("Pix credit amount must be between 1 and 100000.", ephemeral=True)
+            return
+
+        order_id, total = create_order(interaction.user.id, int(amount), payment_method="pix")
+        write_audit(
+            "order_created",
+            actor_id=interaction.user.id,
+            details={"order_id": order_id, "credits": int(amount), "total": total, "payment_method": "pix"},
+        )
+        embed = discord.Embed(title="Pix Credit Order", color=INFO_COLOR, timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="Order", value=f"`{order_id}`", inline=True)
+        embed.add_field(name="Credits", value=f"**{amount}**", inline=True)
+        embed.add_field(name="Total", value=f"**R${total:.2f}**", inline=True)
+        embed.add_field(name="Pix Key", value=f"`{PIX_KEY}`", inline=False)
+        embed.add_field(name="Titular", value=f"**{PIX_NAME}**", inline=True)
+        embed.add_field(name="Status", value="**WAITING PAYMENT**", inline=True)
+        embed.set_footer(text="After payment, wait for staff confirmation.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+
+    if method.value == "crypto":
+        embed = discord.Embed(
+            title="Cryptocurrency Payment",
+            description="Create a ticket and contact **Nyx** or **Hy** for cryptocurrency payment instructions.",
+            color=INFO_COLOR,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(name="Next Step", value="Open a ticket, tell staff how many credits you want, and wait for payment details.", inline=False)
+        embed.set_footer(text="Crypto credit orders are handled manually by staff.")
+        write_audit("crypto_buy_instructions", actor_id=interaction.user.id, details={"payment_method": "crypto"})
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+
+    if robux_package is None:
+        await interaction.response.send_message(
+            "For Robux, choose one package: 10, 50, 100, 250, or 650 credits.",
+            embed=buycredits_help_embed(),
+            ephemeral=True,
+        )
+        return
+
+    credits = int(robux_package.value)
+    gamepass_url = ROBUX_GAMEPASSES[credits]
+    order_id, _ = create_order(
+        interaction.user.id,
+        credits,
+        payment_method="robux",
+        metadata={"gamepass_url": gamepass_url},
     )
+    write_audit(
+        "order_created",
+        actor_id=interaction.user.id,
+        details={"order_id": order_id, "credits": credits, "payment_method": "robux", "gamepass_url": gamepass_url},
+    )
+    embed = discord.Embed(
+        title="Robux Credit Order",
+        description="Buy the gamepass below, then wait for staff confirmation.",
+        color=INFO_COLOR,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.add_field(name="Order", value=f"`{order_id}`", inline=True)
+    embed.add_field(name="Package", value=f"**{credits} credits**", inline=True)
+    embed.add_field(name="Gamepass", value=gamepass_url, inline=False)
+    embed.add_field(name="Status", value="**WAITING CONFIRMATION**", inline=True)
+    embed.set_footer(text="Keep proof of purchase in case staff asks for it.")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="stock", description="Show stock counts.")
@@ -1212,8 +1353,11 @@ async def orderinfo(interaction: discord.Interaction, order_id: str):
     embed = discord.Embed(title=f"Order {order_id}", color=0x3498DB, timestamp=datetime.now(timezone.utc))
     embed.add_field(name="User", value=f"<@{order['user']}>", inline=True)
     embed.add_field(name="Credits", value=str(order["credits"]), inline=True)
-    embed.add_field(name="Total", value=f"R${order['total']:.2f}", inline=True)
+    embed.add_field(name="Payment", value=order_payment_label(order), inline=True)
+    embed.add_field(name="Total", value=order_total_label(order), inline=True)
     embed.add_field(name="Status", value=str(order["status"]).upper(), inline=True)
+    if order.get("metadata", {}).get("gamepass_url"):
+        embed.add_field(name="Gamepass", value=order["metadata"]["gamepass_url"], inline=False)
     embed.add_field(name="Created", value=order["time"], inline=False)
     if order.get("confirmed_at"):
         embed.add_field(name="Confirmed", value=order["confirmed_at"], inline=False)
@@ -1259,7 +1403,7 @@ async def orders(interaction: discord.Interaction):
     lines = []
     for order_id, order in sorted(data.items(), key=lambda item: item[1].get("time", ""), reverse=True)[:20]:
         lines.append(
-            f"`{order_id}` | <@{order['user']}> | {order['credits']} credits | R${order['total']:.2f} | {order['status']} | {order['time']}"
+            f"`{order_id}` | <@{order['user']}> | {order['credits']} credits | {order_payment_label(order)} | {order_total_label(order)} | {order['status']} | {order['time']}"
         )
     await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
@@ -1278,7 +1422,7 @@ async def myorders(interaction: discord.Interaction):
 
     lines = []
     for order_id, order in sorted(user_orders, key=lambda item: item[1].get("time", ""), reverse=True)[:10]:
-        lines.append(f"`{order_id}` | {order['credits']} credits | R${order['total']:.2f} | {order['status']} | {order['time']}")
+        lines.append(f"`{order_id}` | {order['credits']} credits | {order_payment_label(order)} | {order_total_label(order)} | {order['status']} | {order['time']}")
     await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
 
