@@ -15,6 +15,7 @@ from discord.ext import commands
 
 BASE_DIR = Path(__file__).resolve().parent
 TOKEN = os.getenv("TOKEN")
+ENABLE_MEMBER_INTENT = os.getenv("ENABLE_MEMBER_INTENT", "false").lower() in {"1", "true", "yes", "on"}
 
 GUILD_ID = 1463315641871106131
 TOPUP_CHANNEL_ID = 1471541921292878058
@@ -27,7 +28,7 @@ PANEL_MESSAGE_ID = 1478301494431322173
 PRICE_PER_CREDIT = 0.35
 PIX_KEY = "vhxzstore@gmail.com"
 PIX_NAME = "VHXZ STORE"
-GEN_COOLDOWN_SECONDS = 8
+GEN_COOLDOWN_SECONDS = 30
 BOOST_CREDITS_PER_BOOST = 40
 
 DEFAULT_PRICES = {"low": 3, "medium": 10, "high": 14}
@@ -39,6 +40,7 @@ PRICES_FILE = BASE_DIR / "prices.json"
 BOOST_CLAIMS_FILE = BASE_DIR / "boost_claims.json"
 SETTINGS_FILE = BASE_DIR / "settings.json"
 GEN_LOG_FILE = BASE_DIR / "gen_log.txt"
+AUDIT_LOG_FILE = BASE_DIR / "audit_log.jsonl"
 
 STOCK_DIR.mkdir(exist_ok=True)
 
@@ -47,7 +49,7 @@ user_cooldowns: dict[int, float] = {}
 startup_synced = False
 
 intents = discord.Intents.default()
-intents.members = True
+intents.members = ENABLE_MEMBER_INTENT
 bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
 
 
@@ -78,6 +80,19 @@ def save_json(path: Path, data) -> None:
         temp_path.replace(path)
 
 
+def write_audit(action: str, *, actor_id: Optional[int] = None, target_id: Optional[int] = None, details: Optional[dict] = None) -> None:
+    entry = {
+        "time": utc_now(),
+        "action": action,
+        "actor_id": actor_id,
+        "target_id": target_id,
+        "details": details or {},
+    }
+    with file_lock:
+        with AUDIT_LOG_FILE.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
 def save_setting(key: str, value) -> None:
     settings = load_json(SETTINGS_FILE, {})
     settings[key] = value
@@ -102,6 +117,12 @@ def load_prices() -> dict[str, int]:
 def save_price(category: str, price: int) -> None:
     prices = load_prices()
     prices[category] = price
+    save_json(PRICES_FILE, prices)
+
+
+def delete_price(category: str) -> None:
+    prices = load_prices()
+    prices.pop(category, None)
     save_json(PRICES_FILE, prices)
 
 
@@ -141,6 +162,20 @@ def stock_count(category: str) -> int:
         return sum(1 for line in path.read_text(encoding="utf-8", errors="ignore").splitlines() if line.strip())
 
 
+def read_stock_items(category: str) -> list[str]:
+    path = stock_path(category)
+    if not path.exists():
+        return []
+    with file_lock:
+        return [line.strip() for line in path.read_text(encoding="utf-8", errors="ignore").splitlines() if line.strip()]
+
+
+def write_stock_items(category: str, items: list[str]) -> None:
+    path = stock_path(category)
+    with file_lock:
+        path.write_text(("\n".join(items) + "\n") if items else "", encoding="utf-8")
+
+
 def pop_stock_item(category: str) -> Optional[str]:
     path = stock_path(category)
     if not path.exists():
@@ -162,6 +197,24 @@ def append_stock(category: str, items: list[str]) -> int:
         with path.open("a", encoding="utf-8") as handle:
             handle.write("\n".join(items) + "\n")
     return len(items)
+
+
+def append_unique_stock(category: str, items: list[str]) -> tuple[int, int]:
+    existing = set(read_stock_items(category))
+    unique_items = []
+    seen_upload = set()
+
+    for item in items:
+        if item in existing or item in seen_upload:
+            continue
+        unique_items.append(item)
+        seen_upload.add(item)
+
+    if unique_items:
+        append_stock(category, unique_items)
+
+    skipped = len(items) - len(unique_items)
+    return len(unique_items), skipped
 
 
 def get_credits(user_id: int) -> int:
@@ -232,11 +285,11 @@ def product_embed(title: str, description: str, color: int = 0xFF003C) -> discor
     return discord.Embed(title=title, description=description, color=color, timestamp=datetime.now(timezone.utc))
 
 
-def stock_lines() -> list[str]:
+def stock_lines(*, include_empty: bool = True) -> list[str]:
     prices = load_prices()
     return [
         f"**{category.upper()}**: {stock_count(category)} in stock - {prices.get(category, 5)} credits"
-        for category in get_categories()
+        for category in get_categories(include_empty=include_empty)
     ]
 
 
@@ -249,7 +302,7 @@ def panel_embed() -> discord.Embed:
         ),
         color=0xFF003C,
     )
-    embed.add_field(name="Stock", value="\n".join(stock_lines())[:1024] or "No categories configured.", inline=False)
+    embed.add_field(name="Stock", value="\n".join(stock_lines(include_empty=False))[:1024] or "No categories in stock right now.", inline=False)
     embed.add_field(name="Boost Perk", value=f"Boost the server and claim **{BOOST_CREDITS_PER_BOOST} credits**.", inline=False)
     embed.set_footer(text="VHXZ - Instant Delivery")
     return embed
@@ -354,6 +407,11 @@ async def generate_for_user(interaction: discord.Interaction, category: str) -> 
         return
 
     user_cooldowns[interaction.user.id] = now
+    write_audit(
+        "generate",
+        actor_id=interaction.user.id,
+        details={"category": category, "price": price, "remaining_stock": stock_count(category)},
+    )
 
     delivery = f"Category: **{category.upper()}**\nAccount:\n```text\n{item}\n```"
     dm_sent = True
@@ -398,6 +456,12 @@ async def claim_boost_reward(interaction: discord.Interaction) -> None:
 
     balance = add_credits(interaction.user.id, BOOST_CREDITS_PER_BOOST)
     mark_boost_claimed(interaction.user.id, "self_claim", BOOST_CREDITS_PER_BOOST)
+    write_audit(
+        "boost_claim",
+        actor_id=interaction.user.id,
+        target_id=interaction.user.id,
+        details={"credits": BOOST_CREDITS_PER_BOOST, "balance": balance},
+    )
     await interaction.followup.send(
         f"Boost reward claimed: **{BOOST_CREDITS_PER_BOOST} credits** added. New balance: **{balance}**.",
         ephemeral=True,
@@ -491,12 +555,14 @@ async def panel(interaction: discord.Interaction):
     PANEL_MESSAGE_ID = message.id
     save_setting("panel_channel_id", PANEL_CHANNEL_ID)
     save_setting("panel_message_id", PANEL_MESSAGE_ID)
+    write_audit("panel_posted", actor_id=interaction.user.id, details={"channel_id": PANEL_CHANNEL_ID, "message_id": PANEL_MESSAGE_ID})
 
 
 @bot.tree.command(name="boostpanel", description="Post the boost perks panel in this channel.")
 @app_commands.default_permissions(administrator=True)
 async def boostpanel(interaction: discord.Interaction):
     await interaction.response.send_message(embed=boost_perks_embed(), view=BoostPanel())
+    write_audit("boost_panel_posted", actor_id=interaction.user.id, details={"channel_id": interaction.channel_id})
 
 
 @bot.tree.command(name="credits", description="Check your credit balance.")
@@ -520,6 +586,7 @@ async def generate(interaction: discord.Interaction, category: str):
 @app_commands.describe(amount="How many credits you want to buy.")
 async def buycredits(interaction: discord.Interaction, amount: app_commands.Range[int, 1, 100000]):
     order_id, total = create_order(interaction.user.id, int(amount))
+    write_audit("order_created", actor_id=interaction.user.id, details={"order_id": order_id, "credits": int(amount), "total": total})
     await interaction.response.send_message(
         f"Order `{order_id}` created.\n"
         f"Credits: **{amount}**\n"
@@ -545,11 +612,76 @@ async def stock(interaction: discord.Interaction, category: Optional[str] = None
     await interaction.response.send_message("\n".join(lines) or "No categories configured.", ephemeral=True)
 
 
+@bot.tree.command(name="stockinfo", description="Show detailed information for a stock category.")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(category="Category to inspect.")
+@app_commands.autocomplete(category=category_autocomplete)
+async def stockinfo(interaction: discord.Interaction, category: str):
+    category = normalize_category(category)
+    prices = load_prices()
+    items = read_stock_items(category)
+
+    embed = discord.Embed(title=f"Stock Info: {category.upper()}", color=0x3498DB, timestamp=datetime.now(timezone.utc))
+    embed.add_field(name="Count", value=str(len(items)), inline=True)
+    embed.add_field(name="Price", value=f"{prices.get(category, 5)} credits", inline=True)
+    embed.add_field(name="File", value=f"`stocks/{category}.txt`", inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="exportstock", description="Export a category stock file.")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(category="Category to export.")
+@app_commands.autocomplete(category=category_autocomplete)
+async def exportstock(interaction: discord.Interaction, category: str):
+    category = normalize_category(category)
+    path = stock_path(category)
+    if not path.exists() or stock_count(category) == 0:
+        await interaction.response.send_message("That category has no stock to export.", ephemeral=True)
+        return
+
+    await interaction.response.send_message(
+        f"Exporting **{category.upper()}** with **{stock_count(category)}** item(s).",
+        file=discord.File(path, filename=f"{category}_stock.txt"),
+        ephemeral=True,
+    )
+    write_audit("stock_exported", actor_id=interaction.user.id, details={"category": category, "stock": stock_count(category)})
+
+
+@bot.tree.command(name="clearstock", description="Clear all stock from a category.")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(category="Category to clear.")
+@app_commands.autocomplete(category=category_autocomplete)
+async def clearstock(interaction: discord.Interaction, category: str):
+    category = normalize_category(category)
+    before_count = stock_count(category)
+    write_stock_items(category, [])
+    await refresh_panel()
+    write_audit("stock_cleared", actor_id=interaction.user.id, details={"category": category, "removed": before_count})
+    await interaction.response.send_message(f"Cleared **{before_count}** item(s) from **{category.upper()}**.", ephemeral=True)
+
+
+@bot.tree.command(name="deletecategory", description="Delete a stock category and its saved price.")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(category="Category to delete.")
+@app_commands.autocomplete(category=category_autocomplete)
+async def deletecategory(interaction: discord.Interaction, category: str):
+    category = normalize_category(category)
+    before_count = stock_count(category)
+    path = stock_path(category)
+    if path.exists():
+        path.unlink()
+    delete_price(category)
+    await refresh_panel()
+    write_audit("category_deleted", actor_id=interaction.user.id, details={"category": category, "removed_stock": before_count})
+    await interaction.response.send_message(f"Deleted **{category.upper()}** and removed **{before_count}** stock item(s).", ephemeral=True)
+
+
 @bot.tree.command(name="addcredits", description="Add credits to a user.")
 @app_commands.default_permissions(administrator=True)
 @app_commands.describe(member="User receiving credits.", amount="Credits to add.")
 async def addcredits(interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 1, 1000000]):
     balance = add_credits(member.id, int(amount))
+    write_audit("credits_added", actor_id=interaction.user.id, target_id=member.id, details={"amount": int(amount), "balance": balance})
     await interaction.response.send_message(f"Added **{amount}** credits to {member.mention}. New balance: **{balance}**.", ephemeral=True)
 
 
@@ -560,6 +692,7 @@ async def removecredits(interaction: discord.Interaction, member: discord.Member
     if not remove_credits(member.id, int(amount)):
         await interaction.response.send_message(f"{member.mention} does not have enough credits.", ephemeral=True)
         return
+    write_audit("credits_removed", actor_id=interaction.user.id, target_id=member.id, details={"amount": int(amount), "balance": get_credits(member.id)})
     await interaction.response.send_message(f"Removed **{amount}** credits from {member.mention}. New balance: **{get_credits(member.id)}**.", ephemeral=True)
 
 
@@ -569,6 +702,7 @@ async def removecredits(interaction: discord.Interaction, member: discord.Member
 async def grantboost(interaction: discord.Interaction, member: discord.Member, boosts: app_commands.Range[int, 1, 30] = 1):
     amount = int(boosts) * BOOST_CREDITS_PER_BOOST
     balance = add_credits(member.id, amount)
+    write_audit("boost_granted", actor_id=interaction.user.id, target_id=member.id, details={"boosts": int(boosts), "credits": amount, "balance": balance})
     await interaction.response.send_message(
         f"Granted **{amount}** boost credits to {member.mention} for **{boosts}** boost reward(s). New balance: **{balance}**.",
         ephemeral=True,
@@ -586,6 +720,7 @@ async def setprice(interaction: discord.Interaction, category: str, price: app_c
     category = normalize_category(category)
     save_price(category, int(price))
     await refresh_panel()
+    write_audit("price_set", actor_id=interaction.user.id, details={"category": category, "price": int(price)})
     await interaction.response.send_message(f"Set **{category.upper()}** price to **{price}** credits.", ephemeral=True)
 
 
@@ -615,19 +750,25 @@ async def restock(
         await interaction.response.send_message("No accounts were found in the uploaded file.", ephemeral=True)
         return
 
-    added = append_stock(category, items)
+    added, skipped = append_unique_stock(category, items)
     save_price(category, int(price))
     current_stock = stock_count(category)
 
     await interaction.response.send_message(
-        f"Restock complete.\nCategory: **{category.upper()}**\nAdded: **{added}**\nCurrent stock: **{current_stock}**\nPrice: **{price}** credits.",
+        f"Restock complete.\nCategory: **{category.upper()}**\nAdded: **{added}**\nSkipped duplicates: **{skipped}**\nCurrent stock: **{current_stock}**\nPrice: **{price}** credits.",
         ephemeral=True,
     )
-    await send_restock_alert(
-        category,
-        f"RESTOCK\nCategory: **{category.upper()}**\nAdded: **{added}**\nStock now: **{current_stock}**",
-        ping_role=True,
+    write_audit(
+        "restock",
+        actor_id=interaction.user.id,
+        details={"category": category, "price": int(price), "added": added, "skipped_duplicates": skipped, "stock": current_stock},
     )
+    if added > 0:
+        await send_restock_alert(
+            category,
+            f"RESTOCK\nCategory: **{category.upper()}**\nAdded: **{added}**\nStock now: **{current_stock}**",
+            ping_role=True,
+        )
     await refresh_panel()
 
 
@@ -649,6 +790,12 @@ async def confirm(interaction: discord.Interaction, order_id: str):
     order["status"] = "paid"
     order["confirmed_at"] = utc_now()
     save_json(ORDERS_FILE, orders)
+    write_audit(
+        "order_confirmed",
+        actor_id=interaction.user.id,
+        target_id=int(order["user"]),
+        details={"order_id": order_id, "credits": int(order["credits"]), "balance": balance},
+    )
 
     await interaction.response.send_message(f"Order `{order_id}` confirmed. New user balance: **{balance}**.", ephemeral=True)
     try:
@@ -656,6 +803,60 @@ async def confirm(interaction: discord.Interaction, order_id: str):
         await user.send(f"Payment confirmed. **{order['credits']}** credits were added to your account.")
     except discord.DiscordException:
         pass
+
+
+@bot.tree.command(name="orderinfo", description="Show details for a credit order.")
+@app_commands.describe(order_id="Order ID, for example VX-1234.")
+async def orderinfo(interaction: discord.Interaction, order_id: str):
+    order_id = order_id.strip().upper()
+    orders = load_json(ORDERS_FILE, {})
+    order = orders.get(order_id)
+    if not order:
+        await interaction.response.send_message("Order not found.", ephemeral=True)
+        return
+
+    is_admin = isinstance(interaction.user, discord.Member) and interaction.user.guild_permissions.administrator
+    if int(order["user"]) != interaction.user.id and not is_admin:
+        await interaction.response.send_message("You can only view your own orders.", ephemeral=True)
+        return
+
+    embed = discord.Embed(title=f"Order {order_id}", color=0x3498DB, timestamp=datetime.now(timezone.utc))
+    embed.add_field(name="User", value=f"<@{order['user']}>", inline=True)
+    embed.add_field(name="Credits", value=str(order["credits"]), inline=True)
+    embed.add_field(name="Total", value=f"R${order['total']:.2f}", inline=True)
+    embed.add_field(name="Status", value=str(order["status"]).upper(), inline=True)
+    embed.add_field(name="Created", value=order["time"], inline=False)
+    if order.get("confirmed_at"):
+        embed.add_field(name="Confirmed", value=order["confirmed_at"], inline=False)
+    if order.get("cancelled_at"):
+        embed.add_field(name="Cancelled", value=order["cancelled_at"], inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="cancelorder", description="Cancel a waiting order.")
+@app_commands.describe(order_id="Order ID, for example VX-1234.")
+async def cancelorder(interaction: discord.Interaction, order_id: str):
+    order_id = order_id.strip().upper()
+    orders = load_json(ORDERS_FILE, {})
+    order = orders.get(order_id)
+    if not order:
+        await interaction.response.send_message("Order not found.", ephemeral=True)
+        return
+
+    is_admin = isinstance(interaction.user, discord.Member) and interaction.user.guild_permissions.administrator
+    if int(order["user"]) != interaction.user.id and not is_admin:
+        await interaction.response.send_message("You can only cancel your own orders.", ephemeral=True)
+        return
+    if order.get("status") != "waiting":
+        await interaction.response.send_message("Only waiting orders can be cancelled.", ephemeral=True)
+        return
+
+    order["status"] = "cancelled"
+    order["cancelled_at"] = utc_now()
+    order["cancelled_by"] = interaction.user.id
+    save_json(ORDERS_FILE, orders)
+    write_audit("order_cancelled", actor_id=interaction.user.id, target_id=int(order["user"]), details={"order_id": order_id})
+    await interaction.response.send_message(f"Order `{order_id}` cancelled.", ephemeral=True)
 
 
 @bot.tree.command(name="orders", description="Show credit orders.")
@@ -711,6 +912,8 @@ async def stats(interaction: discord.Interaction):
 
 @bot.event
 async def on_member_update(before: discord.Member, after: discord.Member):
+    if not ENABLE_MEMBER_INTENT:
+        return
     if before.premium_since is not None or after.premium_since is None:
         return
     if has_claimed_boost(after.id):
@@ -739,6 +942,8 @@ async def on_ready():
         synced = await bot.tree.sync(guild=guild)
         startup_synced = True
         print(f"Bot online as {bot.user}. Synced {len(synced)} slash commands to guild {GUILD_ID}.")
+        if not ENABLE_MEMBER_INTENT:
+            print("ENABLE_MEMBER_INTENT is false. Automatic boost detection is disabled; /claimboost and /grantboost still work.")
     else:
         print(f"Bot reconnected as {bot.user}.")
 
