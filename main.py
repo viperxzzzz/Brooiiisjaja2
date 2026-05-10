@@ -83,6 +83,7 @@ SETTINGS_FILE = BASE_DIR / "settings.json"
 GEN_LOG_FILE = BASE_DIR / "gen_log.txt"
 AUDIT_LOG_FILE = BASE_DIR / "audit_log.jsonl"
 ACTIVITY_FILE = BASE_DIR / "activity.json"
+USER_MESSAGES_FILE = BASE_DIR / "user_messages.json"
 
 STOCK_DIR.mkdir(exist_ok=True)
 
@@ -885,6 +886,84 @@ class HelpPanel(discord.ui.View):
         await interaction.response.send_message(embed=boost_perks_embed(), view=BoostPanel(), ephemeral=True)
 
 
+class UserMessageModal(discord.ui.Modal, title="Send Message"):
+    message = discord.ui.TextInput(
+        label="Message",
+        placeholder="Write the message you want people to view.",
+        style=discord.TextStyle.paragraph,
+        max_length=1900,
+        required=True,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        content = str(self.message.value).strip()
+        if not content:
+            await interaction.response.send_message("Message cannot be empty.", ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            f"{interaction.user.mention} sent a message.",
+            view=UserMessageViewButton(),
+            allowed_mentions=discord.AllowedMentions(users=False),
+        )
+        sent_message = await interaction.original_response()
+
+        messages = load_json(USER_MESSAGES_FILE, {})
+        messages[str(sent_message.id)] = {
+            "author_id": interaction.user.id,
+            "author_name": str(interaction.user),
+            "message": content,
+            "created_at": utc_now(),
+            "channel_id": interaction.channel_id,
+        }
+        save_json(USER_MESSAGES_FILE, messages)
+        write_audit(
+            "user_message_sent",
+            actor_id=interaction.user.id,
+            details={"channel_id": interaction.channel_id, "message_id": sent_message.id},
+        )
+
+
+class UserMessagePanel(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Send Message", style=discord.ButtonStyle.primary, custom_id="viper:user_message_send")
+    async def send_message(self, interaction: discord.Interaction, button: discord.ui.Button):
+        del button
+        await interaction.response.send_modal(UserMessageModal())
+
+
+class UserMessageViewButton(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="View Message", style=discord.ButtonStyle.secondary, custom_id="viper:user_message_view")
+    async def view_message(self, interaction: discord.Interaction, button: discord.ui.Button):
+        del button
+        if interaction.message is None:
+            await interaction.response.send_message("Message not found.", ephemeral=True)
+            return
+
+        messages = load_json(USER_MESSAGES_FILE, {})
+        data = messages.get(str(interaction.message.id))
+        if not data:
+            await interaction.response.send_message("This message is no longer available.", ephemeral=True)
+            return
+
+        author_id = int(data.get("author_id", 0))
+        author_mention = f"<@{author_id}>" if author_id else data.get("author_name", "Unknown user")
+        embed = discord.Embed(
+            title="User Message",
+            description=str(data.get("message", "")),
+            color=INFO_COLOR,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.set_author(name=str(data.get("author_name", "Unknown user")))
+        embed.add_field(name="Sent by", value=author_mention, inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 class MainPanel(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -942,6 +1021,19 @@ async def panel(interaction: discord.Interaction):
 async def boostpanel(interaction: discord.Interaction):
     await interaction.response.send_message(embed=boost_perks_embed(), view=BoostPanel())
     write_audit("boost_panel_posted", actor_id=interaction.user.id, details={"channel_id": interaction.channel_id})
+
+
+@bot.tree.command(name="messagepanel", description="Post the user message panel in this channel.")
+@app_commands.default_permissions(administrator=True)
+async def messagepanel(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="Message Panel",
+        description="Click the button below to write a message. The bot will post it with a button for others to view.",
+        color=INFO_COLOR,
+        timestamp=datetime.now(timezone.utc),
+    )
+    await interaction.response.send_message(embed=embed, view=UserMessagePanel())
+    write_audit("message_panel_posted", actor_id=interaction.user.id, details={"channel_id": interaction.channel_id})
 
 
 @bot.tree.command(name="activitypanel", description="Post the activity credits panel in this channel.")
@@ -1507,6 +1599,8 @@ async def on_ready():
         bot.add_view(BoostPanel())
         bot.add_view(ActivityPanel())
         bot.add_view(HelpPanel())
+        bot.add_view(UserMessagePanel())
+        bot.add_view(UserMessageViewButton())
         guild = discord.Object(id=GUILD_ID)
         bot.tree.copy_global_to(guild=guild)
         synced = await bot.tree.sync(guild=guild)
