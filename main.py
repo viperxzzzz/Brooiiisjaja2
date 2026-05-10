@@ -47,6 +47,13 @@ RESTOCK_ROLE_ID = 1475311889293774939
 GEN_LOG_CHANNEL_ID = 1475984317581627402
 PANEL_CHANNEL_ID = 1471646039604723805
 PANEL_MESSAGE_ID = 1478301494431322173
+USER_MESSAGE_PANEL_CHANNEL_ID = 1502858749402943600
+USER_MESSAGE_PANEL_LINK = "https://discord.com/channels/1463315641871106131/1502858749402943600"
+USER_MESSAGE_AUTO_MESSAGE = (
+    "Auto Message:\n\n"
+    "Looks like there was a new sale. Want to make your own message? "
+    f"CLICK HERE: {USER_MESSAGE_PANEL_LINK}  (THIS LINK REDIRECTS YOU TO THE MESSAGE PANEL)"
+)
 
 PRICE_PER_CREDIT = 0.35
 PIX_KEY = "vhxzstore@gmail.com"
@@ -924,6 +931,44 @@ class UserMessageModal(discord.ui.Modal, title="Send Message"):
         )
 
 
+class UserMediaModal(discord.ui.Modal, title="Send Media"):
+    media_url = discord.ui.TextInput(
+        label="Media URL",
+        placeholder="Paste an image, video, or file link.",
+        style=discord.TextStyle.short,
+        max_length=500,
+        required=True,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        url = str(self.media_url.value).strip()
+        if not re.fullmatch(r"https?://\S{3,}", url):
+            await interaction.response.send_message("Please send a valid media URL starting with http:// or https://.", ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            f"{interaction.user.mention} sent media.",
+            view=UserMessageViewButton(),
+            allowed_mentions=discord.AllowedMentions(users=False),
+        )
+        sent_message = await interaction.original_response()
+
+        messages = load_json(USER_MESSAGES_FILE, {})
+        messages[str(sent_message.id)] = {
+            "author_id": interaction.user.id,
+            "author_name": str(interaction.user),
+            "media_url": url,
+            "created_at": utc_now(),
+            "channel_id": interaction.channel_id,
+        }
+        save_json(USER_MESSAGES_FILE, messages)
+        write_audit(
+            "user_media_sent",
+            actor_id=interaction.user.id,
+            details={"channel_id": interaction.channel_id, "message_id": sent_message.id},
+        )
+
+
 class UserMessagePanel(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -932,6 +977,11 @@ class UserMessagePanel(discord.ui.View):
     async def send_message(self, interaction: discord.Interaction, button: discord.ui.Button):
         del button
         await interaction.response.send_modal(UserMessageModal())
+
+    @discord.ui.button(label="Send Media", style=discord.ButtonStyle.secondary, custom_id="viper:user_media_send")
+    async def send_media(self, interaction: discord.Interaction, button: discord.ui.Button):
+        del button
+        await interaction.response.send_modal(UserMediaModal())
 
 
 class UserMessageViewButton(discord.ui.View):
@@ -953,14 +1003,18 @@ class UserMessageViewButton(discord.ui.View):
 
         author_id = int(data.get("author_id", 0))
         author_mention = f"<@{author_id}>" if author_id else data.get("author_name", "Unknown user")
+        media_url = str(data.get("media_url", "")).strip()
+        is_media = bool(media_url)
         embed = discord.Embed(
-            title="User Message",
-            description=str(data.get("message", "")),
+            title="User Media" if is_media else "User Message",
+            description=media_url if is_media else str(data.get("message", "")),
             color=INFO_COLOR,
             timestamp=datetime.now(timezone.utc),
         )
         embed.set_author(name=str(data.get("author_name", "Unknown user")))
         embed.add_field(name="Sent by", value=author_mention, inline=False)
+        if is_media and re.search(r"\.(png|jpe?g|gif|webp)(\?.*)?$", media_url, re.IGNORECASE):
+            embed.set_image(url=media_url)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -1028,7 +1082,7 @@ async def boostpanel(interaction: discord.Interaction):
 async def messagepanel(interaction: discord.Interaction):
     embed = discord.Embed(
         title="Message Panel",
-        description="Click the button below to write a message. The bot will post it with a button for others to view.",
+        description="Click a button below to send a message or media link. The bot will post it with a button for others to view.",
         color=INFO_COLOR,
         timestamp=datetime.now(timezone.utc),
     )
@@ -1548,6 +1602,13 @@ async def stats(interaction: discord.Interaction):
 async def on_message(message: discord.Message):
     if message.author.bot or message.guild is None:
         return
+
+    if message.channel.id == USER_MESSAGE_PANEL_CHANNEL_ID:
+        await message.channel.send(
+            USER_MESSAGE_AUTO_MESSAGE,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
     if message.channel.id in ACTIVITY_IGNORED_CHANNEL_IDS:
         return
 
