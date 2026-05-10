@@ -300,6 +300,39 @@ def total_credits_in_circulation() -> int:
     return sum(int(value) for value in data.values())
 
 
+def credit_leaderboard(limit: int = 10) -> list[tuple[int, int]]:
+    data = load_json(CREDITS_FILE, {})
+    leaders = []
+    for user_id, credits in data.items():
+        try:
+            user_id_int = int(user_id)
+            credit_count = int(credits)
+        except (TypeError, ValueError):
+            continue
+        if credit_count <= 0:
+            continue
+        leaders.append((user_id_int, credit_count))
+    return sorted(leaders, key=lambda item: item[1], reverse=True)[:limit]
+
+
+def credit_leaderboard_embed() -> discord.Embed:
+    leaders = credit_leaderboard()
+    if leaders:
+        lines = [f"**{index}.** <@{user_id}> - **{credits}** credits" for index, (user_id, credits) in enumerate(leaders, start=1)]
+        description = "\n".join(lines)
+    else:
+        description = "No users have credits yet."
+
+    embed = discord.Embed(
+        title="Credit Leaderboard",
+        description=description,
+        color=INFO_COLOR,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.set_footer(text="Top 10 current credit balances.")
+    return embed
+
+
 def create_order(user_id: int, credits: int, payment_method: str = "pix", metadata: Optional[dict] = None) -> tuple[str, float]:
     orders = load_json(ORDERS_FILE, {})
     while True:
@@ -1018,6 +1051,16 @@ class UserMessageViewButton(discord.ui.View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+class CreditLeaderboardPanel(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Refresh", style=discord.ButtonStyle.primary, custom_id="viper:credit_leaderboard_refresh")
+    async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
+        del button
+        await interaction.response.edit_message(embed=credit_leaderboard_embed(), view=self)
+
+
 class MainPanel(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -1088,6 +1131,13 @@ async def messagepanel(interaction: discord.Interaction):
     )
     await interaction.response.send_message(embed=embed, view=UserMessagePanel())
     write_audit("message_panel_posted", actor_id=interaction.user.id, details={"channel_id": interaction.channel_id})
+
+
+@bot.tree.command(name="creditleaderboardpanel", description="Post the public credit leaderboard panel in this channel.")
+@app_commands.default_permissions(administrator=True)
+async def creditleaderboardpanel(interaction: discord.Interaction):
+    await interaction.response.send_message(embed=credit_leaderboard_embed(), view=CreditLeaderboardPanel())
+    write_audit("credit_leaderboard_panel_posted", actor_id=interaction.user.id, details={"channel_id": interaction.channel_id})
 
 
 @bot.tree.command(name="activitypanel", description="Post the activity credits panel in this channel.")
@@ -1662,6 +1712,7 @@ async def on_ready():
         bot.add_view(HelpPanel())
         bot.add_view(UserMessagePanel())
         bot.add_view(UserMessageViewButton())
+        bot.add_view(CreditLeaderboardPanel())
         guild = discord.Object(id=GUILD_ID)
         bot.tree.copy_global_to(guild=guild)
         synced = await bot.tree.sync(guild=guild)
