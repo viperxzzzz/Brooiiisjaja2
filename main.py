@@ -51,9 +51,11 @@ USER_MESSAGE_PANEL_CHANNEL_ID = 1502858749402943600
 USER_MESSAGE_PANEL_LINK = "https://discord.com/channels/1463315641871106131/1502858749402943600"
 USER_MESSAGE_AUTO_MESSAGE = (
     "Auto Message:\n\n"
-    "Looks like there was a new sale. Want to make your own message? "
-    f"CLICK HERE: {USER_MESSAGE_PANEL_LINK}  (THIS LINK REDIRECTS YOU TO THE MESSAGE PANEL)"
+    "Looks like there was a new sale. Want to make your own message? CLICK HERE:  "
+    "https://discord.com/channels/1463315641871106131/1502858749402943600/1502862699703566438  "
+    "(THIS LINK REDIRECTS YOU TO THE MESSAGE PANEL)"
 )
+USER_MESSAGE_AUTO_MESSAGE_ID = 0
 
 PRICE_PER_CREDIT = 0.35
 PIX_KEY = "vhxzstore@gmail.com"
@@ -147,11 +149,12 @@ def save_setting(key: str, value) -> None:
 
 
 def load_runtime_settings() -> None:
-    global PANEL_CHANNEL_ID, PANEL_MESSAGE_ID
+    global PANEL_CHANNEL_ID, PANEL_MESSAGE_ID, USER_MESSAGE_AUTO_MESSAGE_ID
 
     settings = load_json(SETTINGS_FILE, {})
     PANEL_CHANNEL_ID = int(settings.get("panel_channel_id", PANEL_CHANNEL_ID))
     PANEL_MESSAGE_ID = int(settings.get("panel_message_id", PANEL_MESSAGE_ID))
+    USER_MESSAGE_AUTO_MESSAGE_ID = int(settings.get("user_message_auto_message_id", USER_MESSAGE_AUTO_MESSAGE_ID))
 
 
 def load_prices() -> dict[str, int]:
@@ -698,6 +701,35 @@ async def claim_boost_reward(interaction: discord.Interaction) -> None:
     )
 
 
+async def refresh_user_message_auto_link() -> None:
+    global USER_MESSAGE_AUTO_MESSAGE_ID
+
+    channel = bot.get_channel(USER_MESSAGE_PANEL_CHANNEL_ID)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(USER_MESSAGE_PANEL_CHANNEL_ID)
+        except discord.DiscordException:
+            return
+
+    if USER_MESSAGE_AUTO_MESSAGE_ID:
+        try:
+            old_message = await channel.fetch_message(USER_MESSAGE_AUTO_MESSAGE_ID)
+            await old_message.delete()
+        except discord.DiscordException:
+            pass
+
+    try:
+        message = await channel.send(
+            USER_MESSAGE_AUTO_MESSAGE,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+    except discord.DiscordException:
+        return
+
+    USER_MESSAGE_AUTO_MESSAGE_ID = message.id
+    save_setting("user_message_auto_message_id", USER_MESSAGE_AUTO_MESSAGE_ID)
+
+
 async def category_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
     del interaction
     current = current.lower()
@@ -798,6 +830,7 @@ class UserMessageModal(discord.ui.Modal, title="Send Message"):
             actor_id=interaction.user.id,
             details={"channel_id": interaction.channel_id, "message_id": sent_message.id},
         )
+        await refresh_user_message_auto_link()
 
 
 class UserMediaModal(discord.ui.Modal, title="Send Media"):
@@ -836,6 +869,7 @@ class UserMediaModal(discord.ui.Modal, title="Send Media"):
             actor_id=interaction.user.id,
             details={"channel_id": interaction.channel_id, "message_id": sent_message.id},
         )
+        await refresh_user_message_auto_link()
 
 
 class UserMessagePanel(discord.ui.View):
@@ -1429,12 +1463,6 @@ async def stats(interaction: discord.Interaction):
 async def on_message(message: discord.Message):
     if message.author.bot or message.guild is None:
         return
-
-    if message.channel.id == USER_MESSAGE_PANEL_CHANNEL_ID:
-        await message.channel.send(
-            USER_MESSAGE_AUTO_MESSAGE,
-            allowed_mentions=discord.AllowedMentions.none(),
-        )
 
 @bot.event
 async def on_member_update(before: discord.Member, after: discord.Member):
