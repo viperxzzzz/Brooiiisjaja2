@@ -904,21 +904,10 @@ class UserMessageViewButton(discord.ui.View):
             await interaction.response.send_message("This message is no longer available.", ephemeral=True)
             return
 
-        author_id = int(data.get("author_id", 0))
-        author_mention = f"<@{author_id}>" if author_id else data.get("author_name", "Unknown user")
+        author_name = str(data.get("author_name", "Unknown user")).split("#", 1)[0]
         media_url = str(data.get("media_url", "")).strip()
-        is_media = bool(media_url)
-        embed = discord.Embed(
-            title="User Media" if is_media else "User Message",
-            description=media_url if is_media else str(data.get("message", "")),
-            color=INFO_COLOR,
-            timestamp=datetime.now(timezone.utc),
-        )
-        embed.set_author(name=str(data.get("author_name", "Unknown user")))
-        embed.add_field(name="Sent by", value=author_mention, inline=False)
-        if is_media and re.search(r"\.(png|jpe?g|gif|webp)(\?.*)?$", media_url, re.IGNORECASE):
-            embed.set_image(url=media_url)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        body = media_url or str(data.get("message", ""))
+        await interaction.response.send_message(f"Message from {author_name}\n\n{body}", ephemeral=True)
 
 
 class CreditLeaderboardPanel(discord.ui.View):
